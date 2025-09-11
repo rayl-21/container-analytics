@@ -1,0 +1,25 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://container-analytics-metrics:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 30s
+      queryTimeout: 60s
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://container-analytics-loki:3100
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: Prometheus
+          matcherRegex: "container_id=(\\w+)"
+          name: "Container Metrics"
+          url: "/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Prometheus%22,%7B%22expr%22:%22{container_id%3D%5C%22${__value.raw}%5C%22}%22%7D%5D"
