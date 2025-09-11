@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  scheduler:
+    build: .
+    container_name: container-analytics-scheduler
+    restart: always
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DOWNLOAD_INTERVAL_MINUTES=10
+      - RETENTION_DAYS=30
+      - DATABASE_URL=sqlite:////data/database.db
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json; health=json.load(open('/data/images/.health')); exit(0 if health['status']!='critical' else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 2G
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    networks:
+      - container-analytics
+
+  database:
+    image: postgres:14-alpine
+    container_name: container-analytics-db
+    restart: always
+    environment:
+      - POSTGRES_DB=container_analytics
+      - POSTGRES_USER=analytics
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - container-analytics
+
+volumes:
+  postgres_data:
+
+networks:
+  container-analytics:
+    driver: bridge
