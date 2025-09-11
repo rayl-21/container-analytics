@@ -570,3 +570,99 @@ def get_detection_summary(start_date: datetime, end_date: datetime) -> Dict[str,
             'processing_rate': round((processed_images / total_images * 100), 1) if total_images > 0 else 0,
             'date_range': {'start': start_date, 'end': end_date}
         }
+
+
+def get_image_stats(camera_id: Optional[str] = None, days: int = 7) -> Dict[str, Any]:
+    """
+    Get image statistics for the scheduler.
+    
+    Args:
+        camera_id: Optional camera filter
+        days: Number of days to look back
+        
+    Returns:
+        Dictionary with image statistics
+    """
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=days)
+    
+    with session_scope() as session:
+        query = session.query(Image).filter(
+            Image.timestamp >= start_date
+        )
+        
+        if camera_id:
+            query = query.filter(Image.camera_id == camera_id)
+        
+        total_images = query.count()
+        processed_images = query.filter(Image.processed == True).count()
+        
+        # Group by date for daily breakdown
+        daily_counts = session.query(
+            func.date(Image.timestamp).label('date'),
+            func.count(Image.id).label('count')
+        ).filter(Image.timestamp >= start_date)
+        
+        if camera_id:
+            daily_counts = daily_counts.filter(Image.camera_id == camera_id)
+        
+        daily_results = daily_counts.group_by(func.date(Image.timestamp)).all()
+        
+        # Get recent images
+        recent_query = query.order_by(desc(Image.timestamp)).limit(10)
+        recent_images = [
+            {
+                'id': img.id,
+                'filepath': img.filepath,
+                'camera_id': img.camera_id,
+                'timestamp': img.timestamp,
+                'processed': img.processed,
+                'file_size': img.file_size
+            }
+            for img in recent_query.all()
+        ]
+        
+        return {
+            'total_images': total_images,
+            'processed_images': processed_images,
+            'unprocessed_images': total_images - processed_images,
+            'processing_rate': round((processed_images / total_images * 100), 1) if total_images > 0 else 0,
+            'daily_counts': [
+                {'date': dc.date, 'count': dc.count} for dc in daily_results
+            ],
+            'recent_images': recent_images,
+            'date_range': {'start': start_date, 'end': end_date}
+        }
+
+
+def get_recent_images(limit: int = 10, camera_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Get recently downloaded images.
+    
+    Args:
+        limit: Maximum number of images to return
+        camera_id: Optional camera filter
+        
+    Returns:
+        List of recent image data
+    """
+    with session_scope() as session:
+        query = session.query(Image).order_by(desc(Image.timestamp))
+        
+        if camera_id:
+            query = query.filter(Image.camera_id == camera_id)
+        
+        images = query.limit(limit).all()
+        
+        return [
+            {
+                'id': img.id,
+                'filepath': img.filepath,
+                'camera_id': img.camera_id,
+                'timestamp': img.timestamp,
+                'processed': img.processed,
+                'file_size': img.file_size,
+                'created_at': img.created_at
+            }
+            for img in images
+        ]
