@@ -71,9 +71,15 @@ def load_analytics_data(start_date: date, end_date: date) -> Dict:
     end_datetime = datetime.combine(end_date, datetime.max.time())
     
     # Get metrics from database
-    metrics = queries.get_metrics_by_date_range(start_datetime, end_datetime)
-    container_stats = queries.get_container_statistics(start_datetime, end_datetime)
-    detection_summary = queries.get_detection_summary(start_datetime, end_datetime)
+    try:
+        metrics = queries.get_metrics_by_date_range(start_datetime, end_datetime)
+        container_stats = queries.get_container_statistics(start_datetime, end_datetime)
+        detection_summary = queries.get_detection_summary(start_datetime, end_datetime)
+    except Exception as e:
+        st.error(f"Database error loading analytics data: {str(e)}")
+        metrics = []
+        container_stats = {'total_containers': 0, 'average_dwell_time': 0}
+        detection_summary = {'detection_counts': [], 'total_images': 0, 'processed_images': 0}
     
     # Process daily data
     daily_data = []
@@ -161,13 +167,17 @@ def load_analytics_data(start_date: date, end_date: date) -> Dict:
             container_types[det['object_type']] = det['count']
     
     if not container_types:
-        container_types = {'No data': 1}
+        container_types = {'Container': container_stats.get('total_containers', 0) or 1}
     
     # Get dwell time data
-    dwell_time_data = queries.get_dwell_time_data(start_datetime, end_datetime)
-    if dwell_time_data:
-        dwell_times = [d['dwell_time'] for d in dwell_time_data if d['dwell_time'] is not None]
-    else:
+    try:
+        dwell_time_data = queries.get_dwell_time_data(start_datetime, end_datetime)
+        if dwell_time_data:
+            dwell_times = [d['dwell_time'] for d in dwell_time_data if d['dwell_time'] is not None]
+        else:
+            dwell_times = []
+    except Exception as e:
+        st.warning(f"Could not load dwell time data: {str(e)}")
         dwell_times = []
     
     return {
@@ -237,7 +247,7 @@ def create_traffic_flow_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def create_dwell_time_analysis(dwell_times: np.ndarray) -> go.Figure:
+def create_dwell_time_analysis(dwell_times: List[float]) -> go.Figure:
     """Create dwell time analysis charts."""
     fig = make_subplots(
         rows=1, cols=2,
@@ -245,32 +255,48 @@ def create_dwell_time_analysis(dwell_times: np.ndarray) -> go.Figure:
         specs=[[{"secondary_y": False}, {"secondary_y": False}]]
     )
     
-    # Histogram
-    fig.add_trace(
-        go.Histogram(
-            x=dwell_times,
-            nbinsx=20,
-            name='Frequency',
-            marker_color='#1f77b4',
-            opacity=0.7
-        ),
-        row=1, col=1
-    )
-    
-    # Cumulative distribution
-    sorted_times = np.sort(dwell_times)
-    cumulative = np.arange(1, len(sorted_times) + 1) / len(sorted_times) * 100
-    
-    fig.add_trace(
-        go.Scatter(
-            x=sorted_times,
-            y=cumulative,
-            mode='lines',
-            name='Cumulative %',
-            line=dict(color='#ff7f0e', width=3)
-        ),
-        row=1, col=2
-    )
+    if len(dwell_times) > 0:
+        # Convert to numpy array for calculations
+        dwell_times_array = np.array(dwell_times)
+        
+        # Histogram
+        fig.add_trace(
+            go.Histogram(
+                x=dwell_times_array,
+                nbinsx=min(20, len(dwell_times)),  # Adjust bins based on data size
+                name='Frequency',
+                marker_color='#1f77b4',
+                opacity=0.7
+            ),
+            row=1, col=1
+        )
+        
+        # Cumulative distribution
+        sorted_times = np.sort(dwell_times_array)
+        cumulative = np.arange(1, len(sorted_times) + 1) / len(sorted_times) * 100
+        
+        fig.add_trace(
+            go.Scatter(
+                x=sorted_times,
+                y=cumulative,
+                mode='lines',
+                name='Cumulative %',
+                line=dict(color='#ff7f0e', width=3)
+            ),
+            row=1, col=2
+        )
+    else:
+        # No data - show placeholder
+        fig.add_annotation(
+            text="No dwell time data available",
+            x=0.25, y=0.5, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=14, color="gray")
+        )
+        fig.add_annotation(
+            text="No dwell time data available",
+            x=0.75, y=0.5, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=14, color="gray")
+        )
     
     fig.update_xaxes(title_text="Dwell Time (hours)", row=1, col=1)
     fig.update_xaxes(title_text="Dwell Time (hours)", row=1, col=2)
@@ -508,14 +534,25 @@ def main():
     
     # Dwell time statistics
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Median Dwell Time", f"{np.median(data['dwell_times']):.1f} hrs")
-    with col2:
-        st.metric("90th Percentile", f"{np.percentile(data['dwell_times'], 90):.1f} hrs")
-    with col3:
-        st.metric("Max Dwell Time", f"{np.max(data['dwell_times']):.1f} hrs")
-    with col4:
-        st.metric("Std Deviation", f"{np.std(data['dwell_times']):.1f} hrs")
+    if len(data['dwell_times']) > 0:
+        dwell_array = np.array(data['dwell_times'])
+        with col1:
+            st.metric("Median Dwell Time", f"{np.median(dwell_array):.1f} hrs")
+        with col2:
+            st.metric("90th Percentile", f"{np.percentile(dwell_array, 90):.1f} hrs")
+        with col3:
+            st.metric("Max Dwell Time", f"{np.max(dwell_array):.1f} hrs")
+        with col4:
+            st.metric("Std Deviation", f"{np.std(dwell_array):.1f} hrs")
+    else:
+        with col1:
+            st.metric("Median Dwell Time", "No data")
+        with col2:
+            st.metric("90th Percentile", "No data")
+        with col3:
+            st.metric("Max Dwell Time", "No data")
+        with col4:
+            st.metric("Std Deviation", "No data")
     
     # Occupancy heatmap
     st.markdown("### 🔥 Occupancy Heatmap (Last 3 Days)")

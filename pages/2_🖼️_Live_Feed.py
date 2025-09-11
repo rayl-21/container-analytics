@@ -107,13 +107,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=10)  # 10-second cache for live data
+@st.cache_data(ttl=30)  # 30-second cache to reduce database load for live data
 def load_live_detections() -> Dict:
     """Load the latest detection data from database."""
     current_time = datetime.now()
     
-    # Get recent detections from database
-    recent_detections_data = queries.get_recent_detections(limit=15)
+    try:
+        # Get recent detections from database
+        recent_detections_data = queries.get_recent_detections(limit=15)
+    except Exception as e:
+        st.error(f"Database error loading detections: {str(e)}")
+        recent_detections_data = []
     
     # Process detections for display
     detections = []
@@ -164,10 +168,14 @@ def load_live_detections() -> Dict:
         }
     
     # Get active containers for tracking
-    with session_scope() as session:
-        active_containers = session.query(Container).filter(
-            Container.status == 'active'
-        ).limit(8).all()
+    try:
+        with session_scope() as session:
+            active_containers = session.query(Container).filter(
+                Container.status == 'active'
+            ).limit(8).all()
+    except Exception as e:
+        st.error(f"Database error loading containers: {str(e)}")
+        active_containers = []
         
         active_tracks = []
         for i, container in enumerate(active_containers):
@@ -184,7 +192,11 @@ def load_live_detections() -> Dict:
     
     # Calculate system metrics
     today_start = datetime.combine(current_time.date(), datetime.min.time())
-    detection_summary = queries.get_detection_summary(today_start, current_time)
+    try:
+        detection_summary = queries.get_detection_summary(today_start, current_time)
+    except Exception as e:
+        st.error(f"Database error loading detection summary: {str(e)}")
+        detection_summary = None
     
     metrics = {
         'total_detections_today': sum(d['count'] for d in detection_summary.get('detection_counts', [])) if detection_summary else 0,
@@ -204,64 +216,83 @@ def load_live_detections() -> Dict:
     }
 
 
-def create_mock_camera_image(detection_data: Optional[Dict] = None) -> Image.Image:
-    """Create a mock camera image with detection boxes."""
-    # Create a mock camera image (normally would be from actual camera feed)
-    width, height = 1000, 700
-    img = Image.new('RGB', (width, height), color='#2c3e50')
-    draw = ImageDraw.Draw(img)
+def load_actual_camera_image(camera_id: str = "CAM-01", detection_data: Optional[Dict] = None) -> Optional[str]:
+    """Load actual camera image from database/filesystem."""
+    # Get recent images from database
+    recent_images = queries.get_recent_images(limit=1, camera_id=camera_id.lower().replace('cam-', '').replace('-', '_') + '_gate')
     
-    # Draw a simple port/yard scene
-    # Ground
-    draw.rectangle([0, height-100, width, height], fill='#34495e')
+    if not recent_images:
+        # Fall back to any recent image
+        all_recent = queries.get_recent_images(limit=10)
+        if all_recent:
+            # Filter by camera type if possible
+            gate_images = [img for img in all_recent if 'gate' in img['filepath'].lower()]
+            if gate_images:
+                return gate_images[0]['filepath']
+            return all_recent[0]['filepath']
+        return None
     
-    # Draw some containers as rectangles
-    container_positions = [
-        (100, 400, 180, 480, '#e74c3c'),  # Red container
-        (200, 350, 280, 450, '#3498db'),  # Blue container
-        (350, 380, 430, 480, '#f39c12'),  # Orange container
-        (500, 300, 580, 400, '#27ae60'),  # Green container
-        (650, 420, 730, 520, '#9b59b6'),  # Purple container
-        (800, 350, 880, 450, '#e67e22'),  # Dark orange container
-    ]
+    return recent_images[0]['filepath']
+
+
+def display_actual_image(image_path: str, camera_id: str, detection_data: Optional[Dict] = None) -> Optional[Image.Image]:
+    """Display actual camera image with optional detection overlays."""
+    if not image_path or not os.path.exists(image_path):
+        return None
     
-    for x1, y1, x2, y2, color in container_positions:
-        draw.rectangle([x1, y1, x2, y2], fill=color, outline='#ecf0f1', width=3)
-    
-    # Add detection boxes if detection data is provided
-    if detection_data and detection_data['detections']:
+    try:
+        # Load the actual image
+        img = Image.open(image_path)
+        
+        # If we have detection data, overlay detection boxes
+        if detection_data and detection_data.get('detections'):
+            draw = ImageDraw.Draw(img)
+            
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+            except:
+                font = ImageFont.load_default()
+            
+            # Draw detection boxes
+            for detection in detection_data['detections'][:5]:  # Show up to 5 detections
+                if detection.get('image_path') == image_path:
+                    x, y = detection['x'], detection['y']
+                    w, h = detection['width'], detection['height']
+                    
+                    # Detection box color based on confidence
+                    confidence = detection['confidence']
+                    if confidence > 0.9:
+                        color = '#00ff00'  # Green for high confidence
+                    elif confidence > 0.8:
+                        color = '#ffff00'  # Yellow for medium confidence
+                    else:
+                        color = '#ff8800'  # Orange for lower confidence
+                    
+                    # Draw bounding box
+                    draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+                    
+                    # Draw label
+                    label = f"{detection['container_id'][:8]} ({confidence:.1%})"
+                    bbox = draw.textbbox((x, y-25), label, font=font)
+                    draw.rectangle(bbox, fill=color, outline=color)
+                    draw.text((x, y-25), label, fill='#000000', font=font)
+        
+        # Add live indicator
+        draw = ImageDraw.Draw(img)
         try:
-            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 20)
         except:
             font = ImageFont.load_default()
         
-        for detection in detection_data['detections'][:3]:  # Show up to 3 detections
-            x, y = detection['x'], detection['y']
-            w, h = detection['width'], detection['height']
-            
-            # Detection box
-            color = '#00ff00' if detection['confidence'] > 0.9 else '#ffff00'
-            draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
-            
-            # Label
-            label = f"{detection['container_id'][:8]} ({detection['confidence']:.1%})"
-            bbox = draw.textbbox((x, y-25), label, font=font)
-            draw.rectangle(bbox, fill=color, outline=color)
-            draw.text((x, y-25), label, fill='#000000', font=font)
-    
-    # Add timestamp
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    draw.text((10, 10), f"LIVE FEED - {timestamp}", fill='#ffffff', font=font)
-    
-    # Add camera info
-    draw.text((10, height-40), "CAM-01 | Gate A | 1920x1080 @ 15 FPS", fill='#ffffff', font=font)
-    
-    return img
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        draw.text((10, 10), f"LIVE FEED - {timestamp}", fill='#ffffff', font=font)
+        draw.text((10, img.height-40), f"{camera_id} | Live Feed | Real Camera Data", fill='#ffffff', font=font)
+        
+        return img
+        
+    except Exception as e:
+        st.error(f"Error loading image {image_path}: {str(e)}")
+        return None
 
 
 def display_detection_card(detection: Dict):
@@ -429,12 +460,41 @@ def main():
     
     # Auto-refresh mechanism
     if auto_refresh:
-        time.sleep(0.1)
-        st.rerun()
+        # Create a placeholder for the refresh countdown
+        refresh_placeholder = st.empty()
+        
+        # Use session state to track refresh timing
+        if 'last_refresh' not in st.session_state:
+            st.session_state.last_refresh = datetime.now()
+        
+        # Calculate time since last refresh
+        time_since_refresh = (datetime.now() - st.session_state.last_refresh).total_seconds()
+        
+        # Only refresh if enough time has passed
+        if time_since_refresh >= refresh_interval:
+            st.session_state.last_refresh = datetime.now()
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            # Show countdown until next refresh
+            time_remaining = int(refresh_interval - time_since_refresh)
+            refresh_placeholder.info(f"⏳ Next refresh in {time_remaining} seconds...")
+            time.sleep(1)
+            st.rerun()
     
     # Load live data
     with st.spinner("Loading live feed data..."):
-        data = load_live_detections()
+        try:
+            data = load_live_detections()
+        except Exception as e:
+            st.error(f"Failed to load live feed data: {str(e)}")
+            data = {
+                'detections': [],
+                'cameras': {},
+                'active_tracks': [],
+                'metrics': {'total_detections_today': 0, 'active_tracks': 0, 'avg_confidence': 0, 'avg_processing_time': 0, 'frames_processed': 0, 'detection_rate': 0},
+                'last_updated': datetime.now()
+            }
     
     # System metrics row
     col1, col2, col3, col4 = st.columns(4)
@@ -475,16 +535,39 @@ def main():
     with col1:
         st.markdown(f"### 📺 Camera Feed - {selected_camera}")
         
-        # Create and display mock camera image
-        camera_img = create_mock_camera_image(data)
-        st.image(camera_img, use_column_width=True, caption=f"Live feed from {selected_camera}")
+        # Load and display actual camera image
+        image_path = load_actual_camera_image(selected_camera, data)
+        if image_path:
+            camera_img = display_actual_image(image_path, selected_camera, data)
+            if camera_img:
+                st.image(camera_img, use_column_width=True, caption=f"Live feed from {selected_camera} - Real Camera Data")
+            else:
+                st.error(f"Failed to load image from {image_path}")
+        else:
+            st.warning(f"No recent images available for {selected_camera}. Please check if the camera service is running and capturing images.")
+            # Show placeholder
+            st.info("📷 Camera feed will appear here when images are available.")
         
         # Camera feed controls
         feed_col1, feed_col2, feed_col3, feed_col4 = st.columns(4)
         
         with feed_col1:
             if st.button("📸 Capture Screenshot"):
-                st.success("Screenshot saved to data/screenshots/")
+                if image_path:
+                    # Copy current image to screenshots directory
+                    os.makedirs("data/screenshots", exist_ok=True)
+                    screenshot_name = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    screenshot_path = f"data/screenshots/{screenshot_name}"
+                    try:
+                        if camera_img:
+                            camera_img.save(screenshot_path)
+                            st.success(f"Screenshot saved as {screenshot_name}")
+                        else:
+                            st.error("No image to capture")
+                    except Exception as e:
+                        st.error(f"Failed to save screenshot: {str(e)}")
+                else:
+                    st.warning("No camera feed available to capture")
         
         with feed_col2:
             if st.button("🎥 Start Recording"):
@@ -495,8 +578,9 @@ def main():
                 st.info("Recording stopped.")
         
         with feed_col4:
-            if st.button("🔍 Zoom to Detection"):
-                st.info("Zooming to latest detection...")
+            if st.button("🔍 Refresh Feed"):
+                st.cache_data.clear()
+                st.rerun()
     
     with col2:
         st.markdown("### 🚨 Recent Detections")
