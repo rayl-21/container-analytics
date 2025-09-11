@@ -1097,3 +1097,437 @@ class TestYOLODetectorErrorHandling:
                 
                 results = detector.detect_batch(sample_images, batch_size=1000)
                 assert len(results) == len(sample_images)
+
+
+class TestYOLODetectorDatabaseIntegration:
+    """Test database integration functionality."""
+    
+    @pytest.fixture(autouse=True)
+    def setup_database(self):
+        """Setup database tables for testing."""
+        from modules.database.models import create_tables, get_engine
+        
+        # Create tables before each test
+        create_tables()
+        
+        yield
+        
+        # Clean up after each test
+        engine = get_engine()
+        with engine.connect() as conn:
+            # Drop all tables for clean state
+            from modules.database.models import Base
+            Base.metadata.drop_all(bind=engine)
+    
+    def test_save_detection_to_database_new_image(self, temp_dir):
+        """Test saving detections for a new image to database."""
+        from modules.detection.yolo_detector import YOLODetector
+        from modules.database.models import session_scope, Image as ImageModel, Detection as DetectionModel
+        import numpy as np
+        import supervision as sv
+        
+        # Create a test image
+        test_image_path = temp_dir / "test_image.jpg"
+        test_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        cv2.imwrite(str(test_image_path), test_image)
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            
+            # Create mock detections
+            mock_detections = Mock(spec=sv.Detections)
+            mock_detections.xyxy = np.array([[100, 100, 200, 200], [300, 200, 450, 350]])
+            mock_detections.confidence = np.array([0.9, 0.8])
+            mock_detections.class_id = np.array([2, 7])  # car, truck
+            mock_detections.__len__ = Mock(return_value=2)
+            
+            # Test saving to database
+            image_id = detector.save_detection_to_database(
+                test_image_path, mock_detections, 0.5
+            )
+            
+            assert image_id is not None
+            
+            # Verify records in database
+            with session_scope() as session:
+                image_record = session.query(ImageModel).filter(ImageModel.id == image_id).first()
+                assert image_record is not None
+                assert image_record.filepath == str(test_image_path)
+                assert image_record.processed == True
+                
+                detections = session.query(DetectionModel).filter(DetectionModel.image_id == image_id).all()
+                assert len(detections) == 2
+                
+                # Check first detection
+                det1 = detections[0]
+                assert det1.object_type in ['car', 'truck']
+                assert det1.confidence in [0.9, 0.8]
+                assert det1.bbox_x == 100 or det1.bbox_x == 300
+    
+    def test_save_detection_to_database_existing_image(self, temp_dir):
+        """Test saving detections for an existing image."""
+        from modules.detection.yolo_detector import YOLODetector
+        from modules.database.models import session_scope, Image as ImageModel, Detection as DetectionModel
+        import numpy as np
+        import supervision as sv
+        
+        test_image_path = temp_dir / "existing_image.jpg"
+        test_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        cv2.imwrite(str(test_image_path), test_image)
+        
+        # Create existing image record
+        with session_scope() as session:
+            existing_image = ImageModel(
+                filepath=str(test_image_path),
+                camera_id='test_camera',
+                processed=False,
+                file_size=1000
+            )
+            session.add(existing_image)
+            session.flush()
+            existing_id = existing_image.id
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            
+            mock_detections = Mock(spec=sv.Detections)
+            mock_detections.xyxy = np.array([[50, 50, 150, 150]])
+            mock_detections.confidence = np.array([0.95])
+            mock_detections.class_id = np.array([2])
+            mock_detections.__len__ = Mock(return_value=1)
+            
+            image_id = detector.save_detection_to_database(
+                test_image_path, mock_detections, 0.3
+            )
+            
+            assert image_id == existing_id
+            
+            # Verify detection was added
+            with session_scope() as session:
+                detections = session.query(DetectionModel).filter(DetectionModel.image_id == image_id).all()
+                assert len(detections) == 1
+    
+    def test_extract_camera_id_from_path(self):
+        """Test camera ID extraction from file paths."""
+        from modules.detection.yolo_detector import YOLODetector
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            
+            # Test various path patterns
+            assert detector._extract_camera_id_from_path(Path("data/images/in_gate_123.jpg")) == "in_gate"
+            assert detector._extract_camera_id_from_path(Path("data/images/out-gate-456.jpg")) == "out_gate"
+            assert detector._extract_camera_id_from_path(Path("data/images/gate_789.jpg")) == "gate"
+            assert detector._extract_camera_id_from_path(Path("data/images/random_image.jpg")) == "unknown"
+            assert detector._extract_camera_id_from_path(Path("data/camera_feed/random_image.jpg")) == "camera_feed"
+    
+    def test_detect_with_retry_success(self, sample_image_with_objects):
+        """Test successful detection with retry logic."""
+        from modules.detection.yolo_detector import YOLODetector
+        import numpy as np
+        import supervision as sv
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            mock_model.return_value = [Mock()]
+            
+            mock_detections = Mock(spec=sv.Detections)
+            mock_detections.xyxy = np.array([[100, 100, 200, 200]])
+            mock_detections.confidence = np.array([0.9])
+            mock_detections.class_id = np.array([2])
+            mock_detections.__len__ = Mock(return_value=1)
+            mock_detections.__getitem__ = Mock(return_value=mock_detections)
+            
+            with patch('supervision.Detections.from_ultralytics', return_value=mock_detections), \
+                 patch('cv2.imread') as mock_imread, \
+                 patch.object(YOLODetector, 'save_detection_to_database', return_value=1):
+                
+                mock_image = np.ones((480, 640, 3), dtype=np.uint8)
+                mock_imread.return_value = mock_image
+                
+                detector = YOLODetector()
+                result = detector.detect_with_retry(sample_image_with_objects, save_to_db=True)
+                
+                assert result is not None
+                assert result['metadata']['image_id'] == 1
+    
+    def test_detect_with_retry_failure(self, sample_image_with_objects):
+        """Test detection retry logic on failures."""
+        from modules.detection.yolo_detector import YOLODetector
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            
+            # Mock detect_single_image to always fail
+            with patch.object(detector, 'detect_single_image', side_effect=Exception("Detection failed")):
+                result = detector.detect_with_retry(
+                    sample_image_with_objects, 
+                    max_retries=2, 
+                    retry_delay=0.1
+                )
+                
+                assert result is None
+
+
+class TestImageProcessingQueue:
+    """Test image processing queue functionality."""
+    
+    def test_queue_initialization(self):
+        """Test queue initialization."""
+        from modules.detection.yolo_detector import ImageProcessingQueue
+        
+        queue = ImageProcessingQueue(maxsize=50)
+        assert queue.qsize() == 0
+        assert len(queue.processed_files) == 0
+    
+    def test_add_and_get_image(self, temp_dir):
+        """Test adding and getting images from queue."""
+        from modules.detection.yolo_detector import ImageProcessingQueue
+        
+        queue = ImageProcessingQueue()
+        test_image = temp_dir / "test.jpg"
+        test_image.touch()
+        
+        # Add image
+        assert queue.add_image(test_image) == True
+        assert queue.qsize() == 1
+        
+        # Get image
+        retrieved = queue.get_image(timeout=0.1)
+        assert retrieved == test_image
+        assert queue.qsize() == 0
+    
+    def test_duplicate_image_handling(self, temp_dir):
+        """Test that duplicate images are not added."""
+        from modules.detection.yolo_detector import ImageProcessingQueue
+        
+        queue = ImageProcessingQueue()
+        test_image = temp_dir / "test.jpg"
+        test_image.touch()
+        
+        # Add image first time
+        assert queue.add_image(test_image) == True
+        queue.mark_processed(test_image)
+        
+        # Try to add same image again
+        assert queue.add_image(test_image) == False
+        assert queue.qsize() == 0
+    
+    def test_queue_full_handling(self, temp_dir):
+        """Test queue behavior when full."""
+        from modules.detection.yolo_detector import ImageProcessingQueue
+        
+        queue = ImageProcessingQueue(maxsize=2)
+        
+        # Fill queue
+        for i in range(2):
+            test_image = temp_dir / f"test_{i}.jpg"
+            test_image.touch()
+            assert queue.add_image(test_image) == True
+        
+        # Try to add one more
+        overflow_image = temp_dir / "overflow.jpg"
+        overflow_image.touch()
+        assert queue.add_image(overflow_image) == False
+    
+    def test_clear_processed_history(self, temp_dir):
+        """Test clearing processed files history."""
+        from modules.detection.yolo_detector import ImageProcessingQueue
+        
+        queue = ImageProcessingQueue()
+        test_image = temp_dir / "test.jpg"
+        test_image.touch()
+        
+        queue.add_image(test_image)
+        queue.mark_processed(test_image)
+        
+        assert len(queue.processed_files) == 1
+        
+        queue.clear_processed_history()
+        assert len(queue.processed_files) == 0
+
+
+class TestImageFileHandler:
+    """Test image file event handler."""
+    
+    def test_handler_initialization(self):
+        """Test file handler initialization."""
+        from modules.detection.yolo_detector import ImageFileHandler, ImageProcessingQueue
+        
+        queue = ImageProcessingQueue()
+        handler = ImageFileHandler(queue)
+        
+        assert handler.processing_queue == queue
+        assert '.jpg' in handler.supported_extensions
+        assert '.png' in handler.supported_extensions
+    
+    def test_on_created_image_file(self, temp_dir):
+        """Test handling of image file creation."""
+        from modules.detection.yolo_detector import ImageFileHandler, ImageProcessingQueue
+        from watchdog.events import FileCreatedEvent
+        
+        queue = ImageProcessingQueue()
+        handler = ImageFileHandler(queue)
+        
+        # Create test image file
+        test_image = temp_dir / "new_image.jpg"
+        test_image.touch()
+        
+        # Simulate file creation event
+        event = FileCreatedEvent(str(test_image))
+        
+        with patch('time.sleep'):  # Skip the wait
+            handler.on_created(event)
+        
+        # Check if image was added to queue
+        assert queue.qsize() == 1
+        retrieved = queue.get_image(timeout=0.1)
+        assert retrieved == test_image
+    
+    def test_on_created_non_image_file(self, temp_dir):
+        """Test handling of non-image file creation."""
+        from modules.detection.yolo_detector import ImageFileHandler, ImageProcessingQueue
+        from watchdog.events import FileCreatedEvent
+        
+        queue = ImageProcessingQueue()
+        handler = ImageFileHandler(queue)
+        
+        # Create non-image file
+        test_file = temp_dir / "document.txt"
+        test_file.touch()
+        
+        # Simulate file creation event
+        event = FileCreatedEvent(str(test_file))
+        handler.on_created(event)
+        
+        # Queue should remain empty
+        assert queue.qsize() == 0
+    
+    def test_on_created_directory(self, temp_dir):
+        """Test handling of directory creation."""
+        from modules.detection.yolo_detector import ImageFileHandler, ImageProcessingQueue
+        from watchdog.events import DirCreatedEvent
+        
+        queue = ImageProcessingQueue()
+        handler = ImageFileHandler(queue)
+        
+        # Create directory
+        test_dir = temp_dir / "new_directory"
+        test_dir.mkdir()
+        
+        # Simulate directory creation event
+        event = DirCreatedEvent(str(test_dir))
+        handler.on_created(event)
+        
+        # Queue should remain empty
+        assert queue.qsize() == 0
+
+
+class TestYOLOWatchMode:
+    """Test YOLO watch mode functionality."""
+    
+    def test_watch_mode_initialization(self, temp_dir):
+        """Test watch mode initialization."""
+        from modules.detection.yolo_detector import YOLODetector, YOLOWatchMode
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            watch_mode = YOLOWatchMode(
+                detector=detector,
+                watch_directory=temp_dir,
+                batch_size=2,
+                max_workers=1
+            )
+            
+            assert watch_mode.detector == detector
+            assert watch_mode.watch_directory == temp_dir
+            assert watch_mode.batch_size == 2
+            assert watch_mode.max_workers == 1
+            assert watch_mode.is_running == False
+    
+    def test_watch_mode_get_stats_initial(self, temp_dir):
+        """Test initial statistics."""
+        from modules.detection.yolo_detector import YOLODetector, YOLOWatchMode
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            watch_mode = YOLOWatchMode(detector=detector, watch_directory=temp_dir)
+            
+            stats = watch_mode.get_stats()
+            
+            assert stats['is_running'] == False
+            assert stats['images_processed'] == 0
+            assert stats['images_failed'] == 0
+            assert stats['total_detections'] == 0
+            assert stats['queue_size'] == 0
+    
+    def test_process_existing_images(self, temp_dir):
+        """Test processing existing images in directory."""
+        from modules.detection.yolo_detector import YOLODetector, YOLOWatchMode
+        import numpy as np
+        
+        # Create test images
+        for i in range(3):
+            img_path = temp_dir / f"existing_{i}.jpg"
+            img_array = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_path), img_array)
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            watch_mode = YOLOWatchMode(
+                detector=detector,
+                watch_directory=temp_dir,
+                process_existing=True
+            )
+            
+            # Process existing images
+            watch_mode._process_existing_images()
+            
+            # Check queue has images
+            assert watch_mode.processing_queue.qsize() == 3
+    
+    @pytest.mark.slow
+    def test_watch_mode_context_manager(self, temp_dir):
+        """Test watch mode context manager."""
+        from modules.detection.yolo_detector import YOLODetector, YOLOWatchMode
+        
+        with patch('modules.detection.yolo_detector.YOLO') as mock_yolo:
+            mock_model = Mock()
+            mock_yolo.return_value = mock_model
+            
+            detector = YOLODetector()
+            watch_mode = YOLOWatchMode(
+                detector=detector,
+                watch_directory=temp_dir,
+                max_workers=1
+            )
+            
+            # Test context manager
+            with watch_mode.running_context():
+                assert watch_mode.is_running == True
+                time.sleep(0.5)  # Let it run briefly
+            
+            # Should be stopped after context exit
+            assert watch_mode.is_running == False

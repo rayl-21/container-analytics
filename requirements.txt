@@ -61,6 +61,7 @@ scikit-image>=0.21.0
 # Additional utilities
 click>=8.1.0
 rich>=13.5.0
+watchdog>=3.0.0
 
 # Web drivers (for Selenium)
 webdriver-manager>=4.0.0
