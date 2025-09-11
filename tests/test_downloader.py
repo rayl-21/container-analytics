@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, mock_open
 
 from modules.downloader.selenium_client import DrayDogDownloader
+from modules.downloader.scheduler import ImageDownloadScheduler, DownloadConfig
 
 
 class TestDrayDogDownloader:
@@ -259,7 +260,7 @@ class TestDrayDogDownloader:
     def test_download_image_already_exists(self, mock_requests, temp_dir):
         """Test download when image already exists."""
         from datetime import datetime
-        
+
         downloader = DrayDogDownloader(download_dir=str(temp_dir))
 
         # Use current date for the test to match the logic in download_image
@@ -350,14 +351,12 @@ class TestDrayDogDownloader:
 
             # No username/password parameters
             result = downloader.download_images_for_date("2025-01-15", "in_gate")
-            
+
             # Assert within the context manager
             assert len(result) == 2
             assert "/path/img1.jpg" in result
             assert "/path/img2.jpg" in result
-            mock_navigate.assert_called_once_with(
-                "in_gate", "2025-01-15"
-            )
+            mock_navigate.assert_called_once_with("in_gate", "2025-01-15")
 
     def test_download_images_for_date_navigation_failure(self, temp_dir):
         """Test workflow with navigation failure."""
@@ -426,6 +425,181 @@ class TestDrayDogDownloader:
 
             mock_cleanup.assert_called_once()
 
+    def test_extract_timestamp_from_url(self, temp_dir):
+        """Test timestamp extraction from DrayDog URLs."""
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+
+        # Test valid URL
+        url = (
+            "https://cdn.draydog.com/apm/2025-01-15/10/2025-01-15T10:30:00-in_gate.jpeg"
+        )
+        timestamp = downloader._extract_timestamp_from_url(url)
+
+        assert timestamp.year == 2025
+        assert timestamp.month == 1
+        assert timestamp.day == 15
+        assert timestamp.hour == 10
+        assert timestamp.minute == 30
+        assert timestamp.second == 0
+
+        # Test URL without timestamp - should return current time
+        invalid_url = "https://cdn.draydog.com/invalid/path.jpeg"
+        timestamp2 = downloader._extract_timestamp_from_url(invalid_url)
+
+        # Should return current time (within last minute)
+        from datetime import datetime, timedelta
+
+        now = datetime.utcnow()
+        assert abs((timestamp2 - now).total_seconds()) < 60
+
+    @patch("modules.downloader.selenium_client.queries.insert_image")
+    @patch("modules.downloader.selenium_client.requests.get")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_download_image_saves_to_database(
+        self, mock_file, mock_requests, mock_insert, temp_dir
+    ):
+        """Test that downloaded images are saved to database."""
+        # Mock successful HTTP response
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = [b"fake image data"]
+        mock_requests.return_value = mock_response
+
+        # Mock database insert
+        mock_insert.return_value = 123
+
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+
+        image_info = {
+            "url": "https://cdn.draydog.com/apm/2025-01-15/10/2025-01-15T10:30:00-in_gate.jpeg",
+            "filename": "2025-01-15T10:30:00-in_gate.jpeg",
+            "timestamp": "2025-01-15T10:30:00",
+            "streamName": "in_gate",
+        }
+
+        with patch("os.path.exists", side_effect=[False, True]), patch(
+            "os.makedirs"
+        ), patch("os.path.getsize", return_value=1024), patch.object(
+            downloader, "_calculate_file_hash", return_value="fake_hash"
+        ):
+
+            filepath = downloader.download_image(image_info)
+
+            # Check that database insert was called
+            assert mock_insert.called
+            call_args = mock_insert.call_args[1]
+            assert call_args["camera_id"] == "in_gate"
+            assert "filepath" in call_args
+            assert call_args["file_size"] == 1024
+            assert call_args["timestamp"] is not None
+
+    @patch("modules.downloader.selenium_client.queries.insert_image")
+    @patch("modules.downloader.selenium_client.requests.get")
+    def test_download_image_database_failure_doesnt_break_download(
+        self, mock_requests, mock_insert, temp_dir
+    ):
+        """Test that database failures don't break image downloads."""
+        # Mock successful HTTP response
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = [b"fake image data"]
+        mock_requests.return_value = mock_response
+
+        # Mock database insert failure
+        mock_insert.side_effect = Exception("Database connection failed")
+
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+
+        image_info = {
+            "url": "https://cdn.draydog.com/apm/2025-01-15/10/2025-01-15T10:30:00-in_gate.jpeg",
+            "filename": "2025-01-15T10:30:00-in_gate.jpeg",
+            "timestamp": "2025-01-15T10:30:00",
+            "streamName": "in_gate",
+        }
+
+        with patch("os.path.exists", side_effect=[False, True]), patch(
+            "os.makedirs"
+        ), patch("os.path.getsize", return_value=1024), patch.object(
+            downloader, "_calculate_file_hash", return_value="fake_hash"
+        ), patch(
+            "builtins.open", mock_open()
+        ):
+
+            # Should still return filepath even if database fails
+            filepath = downloader.download_image(image_info)
+            assert filepath is not None
+            assert mock_insert.called
+
+    @patch("modules.downloader.selenium_client.session_scope")
+    @patch("modules.downloader.selenium_client.queries.insert_image")
+    @patch("modules.downloader.selenium_client.requests.get")
+    def test_download_images_direct_batch_database_insert(
+        self, mock_requests, mock_insert, mock_session_scope, temp_dir
+    ):
+        """Test batch database insertion in download_images_direct."""
+        # Mock successful HTTP responses
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "image/jpeg"}
+        mock_response.content = b"fake image data"
+        mock_requests.return_value = mock_response
+
+        # Mock database operations
+        mock_session = Mock()
+        mock_session_scope.return_value.__enter__.return_value = mock_session
+        mock_insert.return_value = 123
+
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+
+        with patch("os.path.getsize", return_value=1024):
+            # Test with a small number of images
+            result = downloader.download_images_direct(
+                date_str="2025-01-15",
+                stream_name="in_gate",
+                max_images=2,
+                use_actual_timestamps=False,
+            )
+
+            # Should have downloaded 2 images
+            assert len(result) == 2
+
+            # Should have called insert_image for each downloaded image
+            assert mock_insert.call_count == 2
+
+            # Check that session_scope was used for batch operation
+            assert mock_session_scope.called
+
+    @patch("modules.downloader.selenium_client.session_scope")
+    @patch("modules.downloader.selenium_client.queries.insert_image")
+    def test_download_images_direct_database_failure_doesnt_break_download(
+        self, mock_insert, mock_session_scope, temp_dir
+    ):
+        """Test that database failures don't break direct image downloads."""
+        # Mock database failure
+        mock_session_scope.side_effect = Exception("Database connection failed")
+
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+
+        # Mock successful HTTP responses
+        with patch("modules.downloader.selenium_client.requests.get") as mock_requests:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "image/jpeg"}
+            mock_response.content = b"fake image data"
+            mock_requests.return_value = mock_response
+
+            with patch("os.path.getsize", return_value=1024):
+                # Should still download images even if database fails
+                result = downloader.download_images_direct(
+                    date_str="2025-01-15",
+                    stream_name="in_gate",
+                    max_images=1,
+                    use_actual_timestamps=False,
+                )
+
+                # Should have downloaded 1 image despite database failure
+                assert len(result) == 1
+
 
 @pytest.mark.selenium
 class TestDrayDogDownloaderIntegration:
@@ -447,32 +621,31 @@ class TestDrayDogDownloaderIntegration:
         """Test downloading actual images from Dray Dog for one day."""
         pytest.importorskip("selenium")
         from datetime import datetime, timedelta
-        
+
         # Use yesterday's date to ensure images are available
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
         # Set up the download directory
         download_dir = "/Users/rayli/Documents/container-analytics/data/images"
-        
+
         try:
             downloader = DrayDogDownloader(
                 download_dir=download_dir,
                 headless=True,  # Run in headless mode
                 max_retries=3,
                 retry_delay=2.0,
-                timeout=60
+                timeout=60,
             )
-            
+
             print(f"\n=== Starting download for {yesterday} ===")
-            
+
             # Download images for the in_gate camera
             result = downloader.download_images_for_date(
-                date_str=yesterday,
-                stream_name="in_gate"
+                date_str=yesterday, stream_name="in_gate"
             )
-            
+
             print(f"Downloaded {len(result)} images")
-            
+
             # Print downloaded files
             if result:
                 print("\nDownloaded files:")
@@ -480,22 +653,24 @@ class TestDrayDogDownloaderIntegration:
                     print(f"  - {file_path}")
                 if len(result) > 5:
                     print(f"  ... and {len(result) - 5} more files")
-            
+
             # Verify files exist
             assert len(result) > 0, "No images were downloaded"
-            
+
             for file_path in result:
                 assert Path(file_path).exists(), f"File does not exist: {file_path}"
                 assert Path(file_path).stat().st_size > 0, f"File is empty: {file_path}"
-            
-            print(f"\n✅ Successfully downloaded {len(result)} images to {download_dir}")
-            
+
+            print(
+                f"\n✅ Successfully downloaded {len(result)} images to {download_dir}"
+            )
+
             # Cleanup
             downloader.cleanup()
-            
+
         except Exception as e:
             print(f"\n❌ Download failed: {e}")
-            if 'downloader' in locals():
+            if "downloader" in locals():
                 downloader.cleanup()
             # If Chrome WebDriver is not available, skip the test
             if "Chrome" in str(e) or "chromedriver" in str(e):
@@ -507,11 +682,12 @@ class TestDrayDogDownloaderIntegration:
 class TestDrayDogDownloaderScheduler:
     """Tests for scheduler functionality."""
 
-    @patch("modules.downloader.scheduler.APScheduler")
-    def test_scheduler_initialization(self, mock_scheduler):
+    # @patch("modules.downloader.scheduler.APScheduler")
+    def test_scheduler_initialization(self):
         """Test scheduler initialization."""
         # This would test the scheduler.py module
         # For now, this is a placeholder since scheduler.py wasn't shown
+        # Commented out since scheduler module structure is not clear
         pass
 
     @patch("modules.downloader.scheduler.DrayDogDownloader")
@@ -631,3 +807,304 @@ class TestDrayDogDownloaderPerformance:
         assert len(result) == 100
         # Should complete in reasonable time (adjust threshold as needed)
         assert end_time - start_time < 10.0
+
+
+class TestScheduler:
+    """Test class for ImageDownloadScheduler database persistence functionality."""
+
+    def test_scheduler_init_with_database(self, temp_dir):
+        """Test scheduler initialization with database connection validation."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock successful database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 10}
+
+            scheduler = ImageDownloadScheduler(config)
+
+            assert scheduler.database_available == True
+            assert scheduler.stats.total_images == 10
+
+    def test_scheduler_init_without_database(self, temp_dir):
+        """Test scheduler initialization when database is not available."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch("modules.downloader.scheduler.session_scope") as mock_session_scope:
+            # Mock database connection failure
+            mock_session_scope.side_effect = Exception("Database not available")
+
+            scheduler = ImageDownloadScheduler(config)
+
+            assert scheduler.database_available == False
+
+    def test_save_to_database_success(self, temp_dir):
+        """Test successful saving of downloaded files to database."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create test files
+        test_files = []
+        for i in range(3):
+            test_file = temp_dir / f"2025-01-15T10-{i:02d}-00-in_gate.jpg"
+            test_file.write_text(f"test image content {i}")
+            test_files.append(str(test_file))
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session.query.return_value.filter.return_value.first.return_value = (
+                None  # No existing image
+            )
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.save_to_database(test_files, "in_gate")
+
+            # Verify database session was called
+            assert mock_session.add.call_count == 3
+
+    def test_save_to_database_duplicate_handling(self, temp_dir):
+        """Test that duplicate images are not saved to database."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create test file
+        test_file = temp_dir / "2025-01-15T10-30-00-in_gate.jpg"
+        test_file.write_text("test image content")
+        test_files = [str(test_file)]
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+
+            # Mock existing image
+            existing_image = Mock()
+            mock_session.query.return_value.filter.return_value.first.return_value = (
+                existing_image
+            )
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.save_to_database(test_files, "in_gate")
+
+            # Verify no new image was added
+            mock_session.add.assert_not_called()
+
+    def test_save_to_database_when_database_unavailable(self, temp_dir):
+        """Test save_to_database gracefully handles database unavailability."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        test_files = ["/path/to/image.jpg"]
+
+        with patch("modules.downloader.scheduler.session_scope") as mock_session_scope:
+            # Mock database connection failure
+            mock_session_scope.side_effect = Exception("Database not available")
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.database_available = False
+
+            # Should not raise exception
+            scheduler.save_to_database(test_files, "in_gate")
+
+    def test_get_stats_with_database(self, temp_dir):
+        """Test get_stats returns database information when available."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection and stats
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+
+            db_stats = {
+                "total_images": 50,
+                "processed_images": 45,
+                "unprocessed_images": 5,
+                "processing_rate": 90.0,
+            }
+            mock_get_stats.return_value = db_stats
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.stats.successful_runs = 5
+            scheduler.stats.total_runs = 6
+
+            stats = scheduler.get_stats()
+
+            assert stats["database_available"] == True
+            assert stats["database_total_images"] == 50
+            assert stats["database_processed_images"] == 45
+            assert stats["database_unprocessed_images"] == 5
+            assert stats["database_processing_rate"] == 90.0
+            assert stats["total_images"] == 50  # Updated from database
+
+    def test_get_stats_without_database(self, temp_dir):
+        """Test get_stats works when database is not available."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch("modules.downloader.scheduler.session_scope") as mock_session_scope:
+            # Mock database connection failure
+            mock_session_scope.side_effect = Exception("Database not available")
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.stats.total_images = 20
+            scheduler.stats.successful_runs = 3
+            scheduler.stats.total_runs = 3
+
+            stats = scheduler.get_stats()
+
+            assert stats["database_available"] == False
+            assert stats["total_images"] == 20
+            assert "database_total_images" not in stats
+
+    def test_load_stats_from_database_and_json(self, temp_dir):
+        """Test loading stats from database and JSON file combination."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create JSON stats file
+        stats_file = temp_dir / "scheduler_stats.json"
+        stats_data = {
+            "total_runs": 5,
+            "successful_runs": 4,
+            "failed_runs": 1,
+            "total_images": 30,
+            "last_run_time": "2025-01-15T10:30:00",
+            "last_success_time": "2025-01-15T10:30:00",
+            "last_error": None,
+        }
+        stats_file.write_text(json.dumps(stats_data))
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+
+            # Mock database stats
+            mock_get_stats.return_value = {"total_images": 45}
+
+            scheduler = ImageDownloadScheduler(config)
+
+            # Should have loaded scheduler stats from JSON but image count from database
+            assert scheduler.stats.total_runs == 5
+            assert scheduler.stats.successful_runs == 4
+            assert scheduler.stats.total_images == 45  # From database, not JSON
+
+    def test_download_job_calls_save_to_database(self, temp_dir):
+        """Test that download job calls save_to_database after successful downloads."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats, patch(
+            "modules.downloader.scheduler.DrayDogDownloader"
+        ) as mock_downloader_class:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            # Mock downloader
+            mock_downloader = Mock()
+            mock_downloader.download_images_for_date.return_value = [
+                "/path/image1.jpg",
+                "/path/image2.jpg",
+            ]
+            mock_downloader_class.return_value.__enter__.return_value = mock_downloader
+
+            scheduler = ImageDownloadScheduler(config)
+
+            # Mock save_to_database method
+            scheduler.save_to_database = Mock()
+
+            # Call the download job
+            scheduler._download_images_job()
+
+            # Verify save_to_database was called
+            scheduler.save_to_database.assert_called_once_with(
+                ["/path/image1.jpg", "/path/image2.jpg"], "in_gate"
+            )
+
+    def test_print_stats_includes_database_info(self, temp_dir, capsys):
+        """Test that print_stats includes database information."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+
+            mock_get_stats.return_value = {
+                "total_images": 100,
+                "processed_images": 90,
+                "unprocessed_images": 10,
+                "processing_rate": 90.0,
+            }
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.print_stats()
+
+            captured = capsys.readouterr()
+            assert "DATABASE STATISTICS:" in captured.out
+            assert "DB Total Images:      100" in captured.out
+            assert "DB Processed Images:  90" in captured.out
+            assert "DB Processing Rate:   90.0%" in captured.out

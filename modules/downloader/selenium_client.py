@@ -24,8 +24,11 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.chrome import ChromeDriverManager
 from loguru import logger
+
+# Database imports
+from ..database import queries
+from ..database.models import session_scope
 
 
 class DrayDogDownloader:
@@ -373,6 +376,26 @@ class DrayDogDownloader:
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
 
+            # Save to database
+            if os.path.exists(image_path):
+                file_size = os.path.getsize(image_path)
+
+                # Extract timestamp from filename or URL
+                timestamp = self._extract_timestamp_from_url(url)
+
+                # Save to database
+                try:
+                    image_id = queries.insert_image(
+                        filepath=image_path,
+                        camera_id=image_info.get("streamName", "unknown"),
+                        timestamp=timestamp,
+                        file_size=file_size,
+                    )
+                    logger.info(f"Saved to database with ID: {image_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save to database: {e}")
+                    # Don't fail the download if DB insert fails
+
             logger.info(f"Successfully downloaded: {filename}")
             return image_path
 
@@ -405,6 +428,49 @@ class DrayDogDownloader:
             return hash_sha256.hexdigest()
         except Exception:
             return ""
+
+    def _extract_timestamp_from_url(self, url: str) -> datetime:
+        """
+        Extract timestamp from DrayDog URL format.
+
+        DrayDog URLs follow the pattern:
+        https://cdn.draydog.com/apm/[date]/[hour]/[timestamp]-[stream].jpeg
+
+        Args:
+            url: The URL to extract timestamp from
+
+        Returns:
+            datetime: Parsed timestamp, or current time if parsing fails
+        """
+        import re
+
+        # URL format: https://cdn.draydog.com/apm/[date]/[hour]/[timestamp]-[stream].jpeg
+        # Example: https://cdn.draydog.com/apm/2025-01-15/10/2025-01-15T10:30:00-in_gate.jpeg
+        pattern = (
+            r"/(\d{4}-\d{2}-\d{2})/(\d{1,2})/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})-"
+        )
+        match = re.search(pattern, url)
+
+        if match:
+            timestamp_str = match.group(3)
+            try:
+                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                logger.warning(f"Failed to parse timestamp from URL: {url}")
+
+        # Also try to extract from filename if available
+        filename_pattern = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+        filename_match = re.search(filename_pattern, url)
+        if filename_match:
+            try:
+                return datetime.strptime(filename_match.group(1), "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                pass
+
+        logger.warning(
+            f"Could not extract timestamp from URL: {url}, using current time"
+        )
+        return datetime.utcnow()
 
     def download_images_for_date(
         self, date_str: Optional[str] = None, stream_name: str = "in_gate"
@@ -455,40 +521,44 @@ class DrayDogDownloader:
 
         return downloaded_files
 
-    def get_available_timestamps(self, date_str: str = "2025-09-06", stream_name: str = "in_gate") -> List[str]:
+    def get_available_timestamps(
+        self, date_str: str = "2025-09-06", stream_name: str = "in_gate"
+    ) -> List[str]:
         """
         Fetch actual available timestamps from Dray Dog website for a specific date.
-        
+
         Args:
             date_str: Date in YYYY-MM-DD format
             stream_name: Camera stream name (default: in_gate)
-            
+
         Returns:
             List of available timestamp strings (e.g., ["2025-09-06T23:07:34", ...])
         """
         timestamps = []
-        
+
         try:
             # Setup driver if not already initialized
             if not self.driver:
                 self.driver = self._setup_driver()
-            
+
             # Navigate to the camera history page
             url = f"https://app.draydog.com/terminal_cameras/apm?streamName={stream_name}#camera-history"
             logger.info(f"Navigating to {url}")
             self.driver.get(url)
-            
+
             # Wait for page to load
             time.sleep(5)
-            
+
             # Try to select the correct date using the date picker
             try:
                 # Parse the target date
                 target_date = datetime.strptime(date_str, "%Y-%m-%d")
                 # Format like "Sat, Sep 6" - handle both single and double digit days
                 day = target_date.day
-                date_text = target_date.strftime(f"%a, %b {day}")  # Format like "Sat, Sep 6"
-                
+                date_text = target_date.strftime(
+                    f"%a, %b {day}"
+                )  # Format like "Sat, Sep 6"
+
                 # Try to find and click the date button
                 date_button_script = f"""
                     const buttons = document.querySelectorAll('button');
@@ -500,7 +570,7 @@ class DrayDogDownloader:
                     }}
                     return false;
                 """
-                
+
                 clicked = self.driver.execute_script(date_button_script)
                 if clicked:
                     logger.info(f"Clicked date button for {date_text}")
@@ -509,7 +579,7 @@ class DrayDogDownloader:
                     logger.warning(f"Could not find date button for {date_text}")
             except Exception as e:
                 logger.warning(f"Could not select date: {e}")
-            
+
             # Extract timestamps from thumbnail images
             script = f"""
                 const images = document.querySelectorAll('img.el-image__inner');
@@ -524,83 +594,90 @@ class DrayDogDownloader:
                 }});
                 return timestamps;
             """
-            
+
             found_timestamps = self.driver.execute_script(script)
-            
+
             if found_timestamps:
                 timestamps = found_timestamps
                 logger.info(f"Found {len(timestamps)} timestamps for {date_str}")
             else:
-                logger.warning(f"No timestamps found for {date_str}, using default intervals")
+                logger.warning(
+                    f"No timestamps found for {date_str}, using default intervals"
+                )
                 # Fallback to approximate timestamps
                 timestamps = self._generate_fallback_timestamps(date_str)
-            
+
         except Exception as e:
             logger.error(f"Error fetching timestamps: {e}")
             # Use fallback timestamps
             timestamps = self._generate_fallback_timestamps(date_str)
-        
+
         return timestamps
-    
+
     def _generate_fallback_timestamps(self, date_str: str) -> List[str]:
         """
         Generate fallback timestamps at approximate intervals.
-        
+
         Based on observed patterns, images are roughly every 10 minutes
         but with varying seconds (not at exact :00).
-        
+
         Args:
             date_str: Date in YYYY-MM-DD format
-            
+
         Returns:
             List of fallback timestamp strings
         """
         timestamps = []
         target_date = datetime.strptime(date_str, "%Y-%m-%d")
-        
+
         # Common second offsets observed in real data
         second_offsets = [7, 17, 27, 39, 49, 57, 9, 19, 28, 39]
-        
+
         for hour in range(24):
             for minute in range(0, 60, 10):
                 # Use rotating second offsets to approximate real patterns
-                seconds = second_offsets[(hour * 6 + minute // 10) % len(second_offsets)]
-                timestamp = target_date.replace(hour=hour, minute=minute, second=seconds)
+                seconds = second_offsets[
+                    (hour * 6 + minute // 10) % len(second_offsets)
+                ]
+                timestamp = target_date.replace(
+                    hour=hour, minute=minute, second=seconds
+                )
                 timestamps.append(timestamp.strftime("%Y-%m-%dT%H:%M:%S"))
-        
+
         return timestamps
 
     def download_images_direct(
-        self, 
+        self,
         date_str: str = "2025-09-06",
         stream_name: str = "in_gate",
         max_images: Optional[int] = None,
         interval_minutes: int = 10,
-        use_actual_timestamps: bool = True
+        use_actual_timestamps: bool = True,
     ) -> List[str]:
         """
         Download images directly using URL construction without Selenium.
-        
+
         This method constructs image URLs based on the known Dray Dog CDN pattern
         and downloads them directly without needing browser automation.
-        
+
         Args:
             date_str: Date in YYYY-MM-DD format
-            stream_name: Camera stream name (default: in_gate)  
+            stream_name: Camera stream name (default: in_gate)
             max_images: Maximum number of images to download (None for all)
             interval_minutes: Interval between images in minutes (default: 10, ignored if use_actual_timestamps=True)
             use_actual_timestamps: If True, fetch actual timestamps from website first
-        
+
         Returns:
             List of downloaded file paths
         """
         downloaded_files = []
-        
+        downloaded_file_info = []  # For database batch insertion
+
         try:
             # Create date-specific directory
             date_dir = os.path.join(self.download_dir, date_str)
             os.makedirs(date_dir, exist_ok=True)
-            
+
             # Get timestamps to download
             if use_actual_timestamps:
                 logger.info("Fetching actual timestamps from Dray Dog...")
@@ -611,84 +688,130 @@ class DrayDogDownloader:
                 timestamps = []
                 current_time = target_date.replace(hour=0, minute=0, second=0)
                 end_time = target_date.replace(hour=23, minute=59, second=59)
-                
+
                 while current_time <= end_time:
                     timestamps.append(current_time.strftime("%Y-%m-%dT%H:%M:%S"))
                     current_time += timedelta(minutes=interval_minutes)
-            
+
             # Limit timestamps if max_images is set
             if max_images:
                 timestamps = timestamps[:max_images]
-            
+
             logger.info(f"Downloading {len(timestamps)} images...")
-            
+
             for idx, timestamp_str in enumerate(timestamps):
                 # Parse timestamp to get date and hour folders
                 dt = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
                 date_folder = dt.strftime("%Y-%m-%d")
                 hour_folder = str(dt.hour)
-                
+
                 # Construct the image URL
                 # Pattern: https://cdn.draydog.com/apm/YYYY-MM-DD/H/YYYY-MM-DDTHH:MM:SS-stream_name.jpeg
                 full_url = f"https://cdn.draydog.com/apm/{date_folder}/{hour_folder}/{timestamp_str}-{stream_name}.jpeg"
                 thumbnail_url = f"https://cdn.draydog.com/apm/{date_folder}/{hour_folder}/{timestamp_str}-{stream_name}-thumbnail.jpeg"
-                
+
                 # Create filename for local storage
                 filename = f"{timestamp_str.replace(':', '').replace('-', '')}_{stream_name}.jpg"
                 filepath = os.path.join(date_dir, filename)
-                
+
                 # Skip if already downloaded
                 if os.path.exists(filepath):
                     logger.debug(f"Already exists: {filename}")
                     downloaded_files.append(filepath)
+                    # Still add to database info for existing files in case they're not in DB
+                    parsed_timestamp = datetime.strptime(
+                        timestamp_str, "%Y-%m-%dT%H:%M:%S"
+                    )
+                    downloaded_file_info.append(
+                        {
+                            "filepath": filepath,
+                            "camera_id": stream_name,
+                            "timestamp": parsed_timestamp,
+                            "file_size": os.path.getsize(filepath),
+                        }
+                    )
                     continue
-                
+
                 # Try to download the image
                 success = False
-                
+
                 # Try full-size image first
                 try:
                     logger.info(f"Downloading [{idx+1}/{len(timestamps)}]: {full_url}")
-                    response = requests.get(full_url, timeout=30, headers={
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-                    })
-                    
+                    response = requests.get(
+                        full_url,
+                        timeout=30,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                        },
+                    )
+
                     if response.status_code == 200:
                         # Check if we got actual image data
-                        content_type = response.headers.get('content-type', '')
-                        if 'image' in content_type or len(response.content) > 1000:
-                            with open(filepath, 'wb') as f:
+                        content_type = response.headers.get("content-type", "")
+                        if "image" in content_type or len(response.content) > 1000:
+                            with open(filepath, "wb") as f:
                                 f.write(response.content)
                             success = True
                             logger.info(f"✓ Downloaded full image: {filename}")
-                    
+
                 except Exception as e:
                     logger.debug(f"Full image failed: {e}")
-                
+
                 # Fall back to thumbnail if full image failed
                 if not success:
                     try:
                         logger.info(f"Trying thumbnail: {thumbnail_url}")
-                        response = requests.get(thumbnail_url, timeout=30, headers={
-                            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-                        })
-                        
+                        response = requests.get(
+                            thumbnail_url,
+                            timeout=30,
+                            headers={
+                                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                            },
+                        )
+
                         if response.status_code == 200:
-                            content_type = response.headers.get('content-type', '')
-                            if 'image' in content_type or len(response.content) > 1000:
-                                with open(filepath, 'wb') as f:
+                            content_type = response.headers.get("content-type", "")
+                            if "image" in content_type or len(response.content) > 1000:
+                                with open(filepath, "wb") as f:
                                     f.write(response.content)
                                 success = True
                                 logger.info(f"✓ Downloaded thumbnail: {filename}")
-                        
+
                     except Exception as e:
                         logger.debug(f"Thumbnail also failed: {e}")
-                
+
                 if success:
                     downloaded_files.append(filepath)
+                    # Collect info for database insertion
+                    parsed_timestamp = datetime.strptime(
+                        timestamp_str, "%Y-%m-%dT%H:%M:%S"
+                    )
+                    downloaded_file_info.append(
+                        {
+                            "filepath": filepath,
+                            "camera_id": stream_name,
+                            "timestamp": parsed_timestamp,
+                            "file_size": os.path.getsize(filepath),
+                        }
+                    )
                 else:
                     logger.warning(f"✗ Failed to download image for {timestamp_str}")
-            
+
+            # Batch insert to database
+            if downloaded_file_info:
+                try:
+                    with session_scope() as session:
+                        for file_info in downloaded_file_info:
+                            image_id = queries.insert_image(**file_info)
+                            logger.debug(f"Inserted image {image_id}")
+                    logger.info(
+                        f"Batch inserted {len(downloaded_file_info)} images to database"
+                    )
+                except Exception as e:
+                    logger.error(f"Batch database insert failed: {e}")
+                    # Don't fail the download if DB insert fails
+
             # Save metadata
             metadata_path = os.path.join(date_dir, "download_metadata.json")
             metadata = {
@@ -697,17 +820,17 @@ class DrayDogDownloader:
                 "total_images": len(downloaded_files),
                 "download_timestamp": datetime.now().isoformat(),
                 "files": downloaded_files,
-                "method": "direct_url_construction"
+                "method": "direct_url_construction",
             }
-            
-            with open(metadata_path, 'w') as f:
+
+            with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
-            
+
             logger.info(f"Downloaded {len(downloaded_files)} images to {date_dir}")
-            
+
         except Exception as e:
             logger.error(f"Direct download failed: {e}")
-        
+
         return downloaded_files
 
     def download_images_for_date_range(
