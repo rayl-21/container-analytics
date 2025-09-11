@@ -3,7 +3,7 @@
     "detections": "Detections(xyxy=array([[     1104.8,      373.74,      1199.4,      507.48],\n       [          0,       309.7,      132.35,      438.07],\n       [     979.62,      236.44,      1198.3,      337.55],\n       [   0.032566,      245.05,      81.407,      313.71]], dtype=float32), mask=None, confidence=array([    0.42384,      0.3887,     0.37246,     0.25279], dtype=float32), class_id=array([7, 7, 7, 7]), tracker_id=None, data={'class_name': array(['truck', 'truck', 'truck', 'truck'], dtype='<U5')}, metadata={})",
     "metadata": {
       "image_path": "/Users/rayli/Documents/container-analytics/data/images/2025-09-06/20250906T002027_in_gate.jpg",
-      "processing_time": 0.05520987510681152,
+      "processing_time": 0.0903480052947998,
       "num_detections": 4,
       "image_shape": [
         675,

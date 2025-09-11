@@ -592,7 +592,203 @@ def test_end_to_end_pipeline():
         # Cleanup
         test_suite.teardown_class()
 
+def test_today_simple_pipeline():
+    """
+    Simplified test to download one image from today, run detection, 
+    and save to database with truck count reporting.
+    """
+    logger.info("\n" + "="*80)
+    logger.info("STARTING TODAY'S SIMPLE E2E TEST")
+    logger.info("="*80)
+    
+    from datetime import datetime
+    from pathlib import Path
+    import cv2
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_formatted = datetime.now().strftime("%Y-%m-%d")
+    
+    # 1. Initialize database
+    logger.info("\n1. Initializing database...")
+    init_database()
+    
+    # 2. Download one image from Dray Dog for today
+    logger.info(f"\n2. Downloading image from Dray Dog for {today}...")
+    downloader = DrayDogDownloader(
+        download_dir="data/images",
+        headless=True
+    )
+    
+    downloaded_path = None
+    try:
+        # Try downloading today's images
+        downloaded_files = downloader.download_images_direct(
+            date_str=today,
+            stream_name="in_gate",
+            max_images=1,
+            use_actual_timestamps=True
+        )
+        
+        if downloaded_files and len(downloaded_files) > 0:
+            downloaded_path = downloaded_files[0]
+            logger.info(f"   ✅ Downloaded: {downloaded_path}")
+        else:
+            logger.info("   ⚠️  No images from today, trying recent images...")
+            # Fall back to recent images
+            downloader._init_driver()
+            images = downloader.get_recent_images(
+                stream_name="in_gate",
+                max_images=1
+            )
+            
+            if images:
+                image_info = images[0]
+                downloaded_path = downloader.download_image(image_info)
+                logger.info(f"   ✅ Downloaded: {downloaded_path}")
+                
+    finally:
+        downloader.cleanup()
+    
+    if not downloaded_path or not Path(downloaded_path).exists():
+        logger.error("   ❌ Failed to download image")
+        return False
+    
+    # 3. Save image to database
+    logger.info("\n3. Saving image to database...")
+    with get_session() as session:
+        # Check if already exists
+        existing = session.query(Image).filter_by(filepath=downloaded_path).first()
+        if not existing:
+            image_record = Image(
+                timestamp=datetime.now(),
+                filepath=downloaded_path,
+                camera_id="in_gate",
+                processed=False,
+                file_size=Path(downloaded_path).stat().st_size
+            )
+            session.add(image_record)
+            session.commit()
+            image_id = image_record.id
+            logger.info(f"   ✅ Saved with ID: {image_id}")
+        else:
+            image_id = existing.id
+            logger.info(f"   ℹ️  Already in DB with ID: {image_id}")
+    
+    # 4. Run YOLO detection
+    logger.info("\n4. Running YOLO detection...")
+    detector = YOLODetector(
+        model_path="yolov8n.pt",
+        confidence_threshold=0.25,
+        verbose=False
+    )
+    
+    result = detector.detect_single_image(downloaded_path, return_annotated=True)
+    
+    if not result:
+        logger.error("   ❌ Detection failed")
+        return False
+    
+    detections_obj = result.get('detections')
+    num_detections = len(detections_obj) if detections_obj is not None else 0
+    logger.info(f"   ✅ Found {num_detections} objects")
+    
+    # Count trucks (class 7=truck, class 5=bus)
+    truck_count = 0
+    if detections_obj is not None and hasattr(detections_obj, 'class_id'):
+        truck_count = sum(1 for class_id in detections_obj.class_id 
+                         if class_id in [5, 7])
+    
+    # 5. Save detection visualization
+    logger.info("\n5. Saving detection visualization...")
+    output_dir = Path(f"data/images/{today_formatted}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    base_name = Path(downloaded_path).stem
+    output_path = output_dir / f"{base_name}_detected.jpg"
+    
+    if 'annotated_image' in result and result['annotated_image'] is not None:
+        # annotated_image is a PIL Image, save it directly
+        result['annotated_image'].save(str(output_path))
+        logger.info(f"   ✅ Saved to: {output_path}")
+    
+    # 6. Save detections to database
+    logger.info("\n6. Saving detections to database...")
+    saved_count = 0
+    with get_session() as session:
+        # Update image as processed
+        image = session.query(Image).filter_by(id=image_id).first()
+        if image:
+            image.processed = True
+        
+        # Add detections from supervision Detections object
+        if detections_obj is not None and len(detections_obj) > 0:
+            for i in range(len(detections_obj)):
+                # Extract bbox [x, y, width, height]
+                bbox = detections_obj.xyxy[i]  # Get xyxy format
+                x1, y1, x2, y2 = bbox
+                
+                # Get class name from YOLO classes
+                class_id = int(detections_obj.class_id[i])
+                class_names = {0: 'person', 2: 'car', 5: 'bus', 7: 'truck'}
+                class_name = class_names.get(class_id, f'class_{class_id}')
+                
+                detection_record = Detection(
+                    image_id=image_id,
+                    object_type=class_name,
+                    confidence=float(detections_obj.confidence[i]),
+                    bbox_x=float(x1),
+                    bbox_y=float(y1),
+                    bbox_width=float(x2 - x1),
+                    bbox_height=float(y2 - y1),
+                    tracking_id=None
+                )
+                session.add(detection_record)
+                saved_count += 1
+        
+        session.commit()
+    
+    logger.info(f"   ✅ Saved {saved_count} detections")
+    
+    # 7. Report results
+    logger.info("\n" + "="*80)
+    logger.info("TODAY'S E2E TEST RESULTS")
+    logger.info("="*80)
+    logger.info(f"✅ Downloaded image: {Path(downloaded_path).name}")
+    logger.info(f"✅ Saved to DB (ID: {image_id})")
+    logger.info(f"✅ Processed with YOLO")
+    logger.info(f"✅ Saved {saved_count} detections to DB")
+    logger.info(f"\n📊 Detection Summary:")
+    logger.info(f"   Total objects: {num_detections}")
+    logger.info(f"   🚛 Number of trucks detected: {truck_count}")
+    
+    # Show class distribution
+    if detections_obj is not None and len(detections_obj) > 0:
+        class_names = {0: 'person', 2: 'car', 5: 'bus', 7: 'truck'}
+        class_counts = {}
+        for class_id in detections_obj.class_id:
+            cls_name = class_names.get(int(class_id), f'class_{class_id}')
+            class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+        
+        if class_counts:
+            logger.info("\n   Object types:")
+            for cls, cnt in sorted(class_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+                logger.info(f"   - {cls}: {cnt}")
+    
+    logger.info("="*80)
+    logger.info("✅ TODAY'S E2E TEST SUCCESSFUL!")
+    logger.info("="*80 + "\n")
+    
+    return True
+
 
 if __name__ == "__main__":
-    # Run the end-to-end test
-    test_end_to_end_pipeline()
+    import sys
+    
+    # Check for command line arguments
+    if len(sys.argv) > 1 and sys.argv[1] == "--today":
+        # Run simplified test for today's date
+        success = test_today_simple_pipeline()
+        sys.exit(0 if success else 1)
+    else:
+        # Run the full end-to-end test
+        test_end_to_end_pipeline()
