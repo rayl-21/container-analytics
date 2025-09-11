@@ -2,6 +2,8 @@
 
 A Python-based MVP application that automatically downloads port gate camera images from Dray Dog and derives analytics using YOLOv8 computer vision with a Streamlit dashboard for visualization.
 
+**Last Updated**: 2025-09-11 | **Status**: Production-Ready Pipeline with Automated Scheduling
+
 ## 🚀 Quick Start
 
 ```bash
@@ -38,34 +40,39 @@ container-analytics/
 │   ├── 3_📈_Historical.py      # Historical trends
 │   └── 4_⚙️_Settings.py        # Configuration
 ├── modules/
-│   ├── downloader/             # Dray Dog image collection
+│   ├── downloader/             # Selenium-based image collection (70% coverage)
 │   ├── detection/              # YOLOv8 computer vision
 │   ├── analytics/              # Analytics engine
-│   └── database/               # Data persistence
+│   └── database/               # SQLAlchemy ORM (89% coverage)
+├── deployment/                 # Production deployment configs
+│   ├── systemd/               # Linux service configuration
+│   └── docker/                # Docker compose setup
 ├── components/                 # Reusable UI components
 ├── utils/                      # Utility functions
-├── tests/                      # Test suite
+├── tests/                      # Test suite (165+ tests)
 └── data/                       # Data storage
 ```
 
 ## ✅ Features Implemented
 
 ### Core Modules
-- ✅ **Image Downloader**: Selenium-based automated downloading from Dray Dog
-- ✅ **YOLO Detection**: Container and vehicle detection with YOLOv8
-- ✅ **Container Tracking**: Object tracking across frames with ByteTrack
-- ✅ **OCR Module**: Container number extraction
-- ✅ **Database Layer**: SQLAlchemy models with SQLite
-- ✅ **Analytics Engine**: KPI calculations and aggregations
-- ✅ **Alert System**: Anomaly detection and notifications
-- ✅ **Streamlit Dashboard**: Real-time visualization
+- ✅ **Image Downloader**: Selenium-based with database integration and retry logic
+- ✅ **Automated Scheduler**: APScheduler with 10-minute intervals and health monitoring
+- ✅ **Database Layer**: SQLAlchemy ORM with SQLite (89% test coverage)
+- ✅ **Analytics Engine**: KPI calculations for dwell time, throughput, efficiency
+- ✅ **Real Data Pipeline**: Complete with database persistence and monitoring
+- 🔄 **YOLO Detection**: Container and vehicle detection with YOLOv8 (in progress)
+- 🔄 **Container Tracking**: Object tracking across frames with ByteTrack
+- 🔄 **OCR Module**: Container number extraction
+- 🔄 **Alert System**: Anomaly detection and notifications
+- 🔄 **Streamlit Dashboard**: Real-time visualization
 
 ### Dashboard Pages
-- ✅ **Main Overview**: Key metrics and system status
-- ✅ **Analytics**: Detailed metrics with charts
-- ✅ **Live Feed**: Real-time camera view with detections
-- ✅ **Historical**: Long-term trends and patterns
-- ✅ **Settings**: Configuration management
+- 🔄 **Main Overview**: Key metrics and system status
+- 🔄 **Analytics**: Detailed metrics with charts
+- 🔄 **Live Feed**: Real-time camera view with detections
+- 🔄 **Historical**: Long-term trends and patterns
+- 🔄 **Settings**: Configuration management
 
 ### Supporting Components
 - ✅ **Configuration Management**: Pydantic-based settings
@@ -74,21 +81,47 @@ container-analytics/
 - ✅ **Chart Components**: Plotly visualizations
 - ✅ **Test Suite**: Comprehensive pytest coverage
 
+## 🚢 Deployment Options
+
+### Production Deployment with systemd
+```bash
+# Copy service file
+sudo cp deployment/systemd/container-analytics-scheduler.service /etc/systemd/system/
+
+# Enable and start service
+sudo systemctl enable container-analytics-scheduler
+sudo systemctl start container-analytics-scheduler
+
+# Check status
+sudo systemctl status container-analytics-scheduler
+```
+
+### Docker Deployment
+```bash
+# Build and run with Docker Compose
+docker-compose -f deployment/docker/docker-compose.yml up -d
+
+# Check logs
+docker-compose -f deployment/docker/docker-compose.yml logs -f
+
+# Stop services
+docker-compose -f deployment/docker/docker-compose.yml down
+```
+
 ## 🏃 Running Components
 
 ### Start Image Downloader
 ```bash
-# One-time download (today's images)
-python -m modules.downloader.selenium_client --username USER --password PASS
+# Automated scheduling (recommended - runs every 10 minutes)
+python -m modules.downloader.scheduler --streams in_gate out_gate
 
-# Download specific date
-python -m modules.downloader.selenium_client --username USER --password PASS --date 2025-09-07
+# One-time download (specific date)
+python -m modules.downloader.selenium_client --date 2025-09-07
 
 # Download date range
-python -m modules.downloader.selenium_client --username USER --password PASS --date-range 2025-09-01 2025-09-07
+python -m modules.downloader.selenium_client --date-range 2025-09-01 2025-09-07
 
-# Scheduled downloads (every 10 minutes)
-python -m modules.downloader.scheduler --streams in_gate out_gate
+# Note: Dray Dog images are publicly accessible - no authentication required
 ```
 
 ### Run YOLO Detection
@@ -115,14 +148,21 @@ streamlit run app.py --server.port 8080
 ## 🧪 Testing
 
 ```bash
-# Run all tests
-pytest tests/
+# Run all tests with coverage report
+pytest tests/ --cov=modules --cov-report=term-missing
 
-# Run with coverage
-pytest --cov=modules tests/
+# Run specific test modules
+pytest tests/test_database.py -v        # Database tests (41 tests)
+pytest tests/test_downloader.py -v      # Downloader tests (25 tests)
+pytest tests/test_scheduler_automation.py -v  # Scheduler tests (29 tests)
+pytest tests/test_analytics.py -v       # Analytics tests (20+ tests)
+pytest tests/test_e2e_pipeline.py -v    # End-to-end tests
 
-# Run specific test module
-pytest tests/test_detection.py -v
+# Current coverage:
+# - Database: 89%
+# - Downloader: 70%
+# - Scheduler: 64%
+# - Overall: 165+ tests
 ```
 
 ## 📊 Key Metrics Tracked
@@ -136,11 +176,12 @@ pytest tests/test_detection.py -v
 ## 🔧 Configuration
 
 Edit `.env` file for:
-- Dray Dog credentials
+- Stream names (in_gate, out_gate)
 - Detection thresholds
-- Alert settings
+- Alert settings and email notifications
 - Database configuration
-- Email notifications
+- Scheduler intervals and retry settings
+- Retention policies (default: 30 days)
 
 ## 📈 Performance Targets
 
@@ -148,14 +189,16 @@ Edit `.env` file for:
 - Detection Accuracy: 95%+ for containers
 - Dashboard Load Time: <3 seconds
 - Real-time Update Latency: <1 second
+- Download Success Rate: 95%+ with retry logic
+- Database Query Response: <100ms for aggregations
 
 ## 🚀 Next Steps
 
-1. **Install dependencies** and configure environment
-2. **Run validation**: `python validate_modules.py`
-3. **Start dashboard**: `streamlit run app.py`
-4. **Configure Dray Dog** credentials in `.env`
-5. **Begin image collection** with scheduler
+1. **Install dependencies**: `pip install -r requirements.txt`
+2. **Initialize database**: `python -m modules.database.models --init`
+3. **Start scheduler**: `python -m modules.downloader.scheduler --streams in_gate out_gate`
+4. **Deploy to production**: Use systemd or Docker configurations
+5. **Monitor system**: Check logs and health status regularly
 
 ## 📝 Development
 

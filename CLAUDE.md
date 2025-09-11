@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Container Analytics - A Python-based MVP application that automatically downloads port gate camera images from Dray Dog (no login required - direct public access) and derives analytics using YOLOv8 computer vision with a Streamlit dashboard for visualization.
 
 ## Current Status: MVP Development Phase
-**Last Updated**: 2025-09-07
+**Last Updated**: 2025-09-11
 
 ### Completed Milestones ✅
 - **Database Module**: 89% test coverage with SQLAlchemy ORM, 20+ query functions
@@ -15,11 +15,15 @@ Container Analytics - A Python-based MVP application that automatically download
 - **Test Infrastructure**: 165+ tests across all modules with pytest
 - **Analytics Engine**: KPI calculations for dwell time, throughput, efficiency
 - **E2E Pipeline**: End-to-end testing framework with mock data support
+- **Real Data Pipeline**: Complete with database integration and automated scheduling
+- **Downloader Module**: Selenium-based with database persistence (70% coverage)
+- **Scheduler Module**: Production-ready with retry logic and monitoring (64% coverage)
+- **Deployment Configs**: systemd service and Docker compose for production
 
 ### In Progress 🔄
 - **Detection Module**: YOLOv8 integration with container tracking
-- **Downloader Module**: Selenium-based automated image collection
 - **Streamlit Dashboard**: Multi-page application with real-time updates
+- **Container OCR**: Number recognition system for container IDs
 
 ## Technology Stack
 
@@ -77,11 +81,17 @@ container-analytics/
 │   ├── test_analytics.py      # Analytics tests (20+ tests)
 │   ├── test_detection.py      # Detection tests
 │   ├── test_downloader.py     # Downloader tests (25 tests)
+│   ├── test_scheduler_automation.py  # Scheduler automation tests (29 tests)
 │   └── test_e2e_pipeline.py   # End-to-end pipeline tests
 ├── data/                      # Data storage
 │   ├── images/                # Downloaded camera images
 │   ├── models/                # YOLO model weights (yolov8n.pt)
 │   └── database.db            # SQLite database
+├── deployment/                # Production deployment configs
+│   ├── systemd/              # Linux service configuration
+│   │   └── container-analytics-scheduler.service
+│   └── docker/               # Docker deployment
+│       └── docker-compose.yml
 ├── requirements.txt           # Python dependencies
 ├── .env.example              # Environment variables template
 └── .streamlit/
@@ -205,8 +215,9 @@ All models use proper indexes for performance and foreign key constraints for da
 ### Coverage Goals
 - Database Module: ✅ 89% (achieved)
 - Analytics Module: ✅ Good coverage
+- Downloader Module: ✅ 70% (achieved)
+- Scheduler Module: ✅ 64% (achieved)
 - Detection Module: 🔄 Target 80%
-- Downloader Module: 🔄 Target 80%
 - Overall Target: 80%+ for all production code
 
 ### Test Categories
@@ -385,6 +396,9 @@ jobs:
 - YOLO models are stored in `data/models/` only
 - Never commit `.env` files or credentials
 - Run tests before committing: `pytest tests/`
+- Database integration is complete - use `session_scope()` for transactions
+- Scheduler runs every 10 minutes - matches Dray Dog camera interval
+- Production deployment configs available in `deployment/` directory
 - Update this file when architecture changes significantly
 - Use feature branches for ALL development work
 - Never push directly to `main` or `develop`
