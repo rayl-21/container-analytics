@@ -1,70 +1,10 @@
 [
   {
-    "detections": "Detections(xyxy=array([], shape=(0, 4), dtype=float32), mask=None, confidence=array([], dtype=float32), class_id=array([], dtype=int64), tracker_id=None, data={'class_name': array([], dtype=float64)}, metadata={})",
+    "detections": "Detections(xyxy=array([[     1104.8,      373.74,      1199.4,      507.48],\n       [          0,       309.7,      132.35,      438.07],\n       [     979.62,      236.44,      1198.3,      337.55],\n       [   0.032566,      245.05,      81.407,      313.71]], dtype=float32), mask=None, confidence=array([    0.42384,      0.3887,     0.37246,     0.25279], dtype=float32), class_id=array([7, 7, 7, 7]), tracker_id=None, data={'class_name': array(['truck', 'truck', 'truck', 'truck'], dtype='<U5')}, metadata={})",
     "metadata": {
-      "image_path": "data/images/2025-09-06/20250906T230734_in_gate.jpg",
-      "processing_time": 0.05402112007141113,
-      "num_detections": 0,
-      "image_shape": [
-        675,
-        1200,
-        3
-      ],
-      "model_confidence": 0.25,
-      "device": "cpu"
-    }
-  },
-  {
-    "detections": "Detections(xyxy=array([], shape=(0, 4), dtype=float32), mask=None, confidence=array([], dtype=float32), class_id=array([], dtype=int64), tracker_id=None, data={'class_name': array([], dtype=float64)}, metadata={})",
-    "metadata": {
-      "image_path": "data/images/2025-09-06/20250906T231734_in_gate.jpg",
-      "processing_time": 0.0425870418548584,
-      "num_detections": 0,
-      "image_shape": [
-        675,
-        1200,
-        3
-      ],
-      "model_confidence": 0.25,
-      "device": "cpu"
-    }
-  },
-  {
-    "detections": "Detections(xyxy=array([[     1117.4,      17.422,      1160.1,      38.042]], dtype=float32), mask=None, confidence=array([    0.25272], dtype=float32), class_id=array([2]), tracker_id=None, data={'class_name': array(['car'], dtype='<U3')}, metadata={})",
-    "metadata": {
-      "image_path": "data/images/2025-09-06/20250906T232756_in_gate.jpg",
-      "processing_time": 0.04328584671020508,
-      "num_detections": 1,
-      "image_shape": [
-        675,
-        1200,
-        3
-      ],
-      "model_confidence": 0.25,
-      "device": "cpu"
-    }
-  },
-  {
-    "detections": "Detections(xyxy=array([[     1015.9,      27.121,      1054.5,      50.516]], dtype=float32), mask=None, confidence=array([    0.25379], dtype=float32), class_id=array([2]), tracker_id=None, data={'class_name': array(['car'], dtype='<U3')}, metadata={})",
-    "metadata": {
-      "image_path": "data/images/2025-09-06/20250906T233934_in_gate.jpg",
-      "processing_time": 0.04281115531921387,
-      "num_detections": 1,
-      "image_shape": [
-        675,
-        1200,
-        3
-      ],
-      "model_confidence": 0.25,
-      "device": "cpu"
-    }
-  },
-  {
-    "detections": "Detections(xyxy=array([[      989.9,      191.61,        1098,       303.6]], dtype=float32), mask=None, confidence=array([    0.39553], dtype=float32), class_id=array([7]), tracker_id=None, data={'class_name': array(['truck'], dtype='<U5')}, metadata={})",
-    "metadata": {
-      "image_path": "data/images/2025-09-06/20250906T234956_in_gate.jpg",
-      "processing_time": 0.04172086715698242,
-      "num_detections": 1,
+      "image_path": "/Users/rayli/Documents/container-analytics/data/images/2025-09-06/20250906T002027_in_gate.jpg",
+      "processing_time": 0.0903480052947998,
+      "num_detections": 4,
       "image_shape": [
         675,
         1200,
