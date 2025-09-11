@@ -14,7 +14,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy import and_, or_, func, desc, asc
 from sqlalchemy.orm import Session
 
-from .models import Image, Detection, Container, Metric, session_scope
+from .models import Image, Detection, Container, Metric, ContainerMovement, session_scope
 
 
 def insert_image(filepath: str, camera_id: str, timestamp: Optional[datetime] = None, 
@@ -666,3 +666,141 @@ def get_recent_images(limit: int = 10, camera_id: Optional[str] = None) -> List[
             }
             for img in images
         ]
+
+
+class DatabaseQueries:
+    """
+    Database query helper class for container tracking analytics.
+    
+    This class provides a convenient interface for common database queries
+    used by the tracking and analytics modules.
+    """
+    
+    def __init__(self):
+        """Initialize the database queries helper."""
+        pass
+    
+    def get_containers_in_timeframe(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        camera_id: Optional[str] = None,
+        status: Optional[str] = None
+    ) -> List[Container]:
+        """
+        Get containers within a specific timeframe.
+        
+        Args:
+            start_time: Start of time window
+            end_time: End of time window
+            camera_id: Optional camera filter
+            status: Optional status filter
+            
+        Returns:
+            List of Container objects
+        """
+        with session_scope() as session:
+            query = session.query(Container).filter(
+                Container.first_seen >= start_time
+            )
+            
+            if camera_id:
+                query = query.filter(
+                    or_(
+                        Container.entry_camera_id == camera_id,
+                        Container.current_camera_id == camera_id
+                    )
+                )
+            
+            if status:
+                query = query.filter(Container.status == status)
+            
+            return query.all()
+    
+    def get_movements_in_timeframe(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        camera_id: Optional[str] = None
+    ) -> List[ContainerMovement]:
+        """
+        Get container movements within a specific timeframe.
+        
+        Args:
+            start_time: Start of time window
+            end_time: End of time window
+            camera_id: Optional camera filter
+            
+        Returns:
+            List of ContainerMovement objects
+        """
+        with session_scope() as session:
+            query = session.query(ContainerMovement).filter(
+                ContainerMovement.timestamp >= start_time,
+                ContainerMovement.timestamp <= end_time
+            )
+            
+            if camera_id:
+                query = query.filter(ContainerMovement.to_camera_id == camera_id)
+            
+            return query.all()
+    
+    def get_active_containers(self) -> List[Container]:
+        """
+        Get all currently active containers.
+        
+        Returns:
+            List of active Container objects
+        """
+        with session_scope() as session:
+            return session.query(Container).filter(
+                Container.status == 'active'
+            ).all()
+    
+    def get_container_by_number(self, container_number: str) -> Optional[Container]:
+        """
+        Get a container by its number.
+        
+        Args:
+            container_number: Container number to search for
+            
+        Returns:
+            Container object or None if not found
+        """
+        with session_scope() as session:
+            return session.query(Container).filter(
+                Container.container_number == container_number
+            ).first()
+    
+    def update_container_location(
+        self,
+        container_number: str,
+        camera_id: str,
+        timestamp: datetime
+    ) -> bool:
+        """
+        Update container's current location.
+        
+        Args:
+            container_number: Container number
+            camera_id: New camera/location ID
+            timestamp: Update timestamp
+            
+        Returns:
+            True if update was successful
+        """
+        try:
+            with session_scope() as session:
+                container = session.query(Container).filter(
+                    Container.container_number == container_number
+                ).first()
+                
+                if container:
+                    container.current_camera_id = camera_id
+                    container.last_seen = timestamp
+                    container.calculate_dwell_time()
+                    return True
+                
+                return False
+        except Exception:
+            return False

@@ -292,14 +292,16 @@ class ContainerOCR:
                 return True
         
         # Additional checks for partial matches or common variations
-        if len(cleaned_text) >= 10:
+        # Only allow exactly 11 characters for standard format
+        if len(cleaned_text) == 11:
             # Check if starts with known owner code
             if cleaned_text[:3] in self.COMMON_OWNER_CODES:
-                return True
+                # Check for equipment category in 4th position
+                if cleaned_text[3] in 'UJZ':
+                    return re.match(r'^[A-Z]{3}[UJZ][0-9]{7}$', cleaned_text) is not None
             
-            # Check basic structure (letters followed by digits)
-            if re.match(r'^[A-Z]{3,4}[0-9]{6,7}$', cleaned_text):
-                return True
+            # Check basic structure (4 letters + 7 digits)
+            return re.match(r'^[A-Z]{4}[0-9]{7}$', cleaned_text) is not None
         
         return False
     

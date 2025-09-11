@@ -38,10 +38,12 @@ class Image(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
-    filepath = Column(String(500), nullable=False, unique=True)
+    image_path = Column(String(500), nullable=False, unique=True)  # Renamed for consistency
+    filepath = Column(String(500))  # Keep for backward compatibility
     camera_id = Column(String(100), nullable=False)
     processed = Column(Boolean, default=False, nullable=False)
     file_size = Column(Integer)  # File size in bytes
+    detection_count = Column(Integer, default=0)  # Number of detections in this image
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -53,10 +55,11 @@ class Image(Base):
         Index('idx_image_camera_id', 'camera_id'),
         Index('idx_image_processed', 'processed'),
         Index('idx_image_camera_timestamp', 'camera_id', 'timestamp'),
+        Index('idx_image_path', 'image_path'),
     )
     
     def __repr__(self):
-        return f"<Image(id={self.id}, camera_id='{self.camera_id}', timestamp={self.timestamp})>"
+        return f"<Image(id={self.id}, camera_id='{self.camera_id}', timestamp={self.timestamp}, detections={self.detection_count})>"
 
 
 class Detection(Base):
@@ -67,14 +70,15 @@ class Detection(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     image_id = Column(Integer, ForeignKey('images.id'), nullable=False)
-    object_type = Column(String(50), nullable=False)  # 'container', 'truck', 'person', etc.
+    class_id = Column(Integer, nullable=False)  # YOLO class ID (0=container, etc.)
     confidence = Column(Float, nullable=False)
-    bbox_x = Column(Float, nullable=False)  # Bounding box coordinates
-    bbox_y = Column(Float, nullable=False)
-    bbox_width = Column(Float, nullable=False) 
-    bbox_height = Column(Float, nullable=False)
+    x1 = Column(Float, nullable=False)  # Bounding box coordinates (xyxy format)
+    y1 = Column(Float, nullable=False)
+    x2 = Column(Float, nullable=False) 
+    y2 = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
-    tracking_id = Column(Integer)  # For object tracking across frames
+    track_id = Column(Integer)  # For object tracking across frames
+    object_type = Column(String(50))  # Human-readable type ('container', 'truck', etc.)
     
     # Relationships
     image = relationship("Image", back_populates="detections")
@@ -82,24 +86,47 @@ class Detection(Base):
     # Indexes for performance
     __table_args__ = (
         Index('idx_detection_image_id', 'image_id'),
-        Index('idx_detection_object_type', 'object_type'),
+        Index('idx_detection_class_id', 'class_id'),
         Index('idx_detection_timestamp', 'timestamp'),
-        Index('idx_detection_tracking_id', 'tracking_id'),
+        Index('idx_detection_track_id', 'track_id'),
         Index('idx_detection_confidence', 'confidence'),
+        Index('idx_detection_object_type', 'object_type'),
     )
     
     @property
     def bbox(self) -> dict:
         """Return bounding box as dictionary."""
         return {
-            'x': self.bbox_x,
-            'y': self.bbox_y,
-            'width': self.bbox_width,
-            'height': self.bbox_height
+            'x1': self.x1,
+            'y1': self.y1,
+            'x2': self.x2,
+            'y2': self.y2
         }
     
+    @property 
+    def bbox_xywh(self) -> dict:
+        """Return bounding box in xywh format."""
+        return {
+            'x': self.x1,
+            'y': self.y1,
+            'width': self.x2 - self.x1,
+            'height': self.y2 - self.y1
+        }
+    
+    def set_bbox(self, x1: float, y1: float, x2: float, y2: float):
+        """Set bounding box coordinates."""
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
+    
+    @property
+    def area(self) -> float:
+        """Calculate bounding box area."""
+        return (self.x2 - self.x1) * (self.y2 - self.y1)
+    
     def __repr__(self):
-        return f"<Detection(id={self.id}, object_type='{self.object_type}', confidence={self.confidence:.2f})>"
+        return f"<Detection(id={self.id}, class_id={self.class_id}, confidence={self.confidence:.2f}, track_id={self.track_id})>"
 
 
 class Container(Base):
@@ -116,7 +143,18 @@ class Container(Base):
     total_detections = Column(Integer, default=0)
     avg_confidence = Column(Float)
     status = Column(String(20), default='active')  # 'active', 'departed', 'unknown'
-    camera_id = Column(String(100))  # Primary camera where detected
+    entry_camera_id = Column(String(100))  # Camera where first detected (IN gate)
+    exit_camera_id = Column(String(100))   # Camera where last seen (OUT gate)
+    current_camera_id = Column(String(100))  # Current camera location
+    entry_type = Column(String(20))  # 'truck_entry', 'rail_entry', etc.
+    exit_type = Column(String(20))   # 'truck_exit', 'rail_exit', etc.
+    ocr_confidence = Column(Float)   # Best OCR confidence score
+    track_ids = Column(Text)         # JSON array of associated track IDs
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    movements = relationship("ContainerMovement", back_populates="container", cascade="all, delete-orphan")
     
     # Indexes for performance
     __table_args__ = (
@@ -124,7 +162,11 @@ class Container(Base):
         Index('idx_container_first_seen', 'first_seen'),
         Index('idx_container_last_seen', 'last_seen'),
         Index('idx_container_status', 'status'),
-        Index('idx_container_camera_id', 'camera_id'),
+        Index('idx_container_entry_camera', 'entry_camera_id'),
+        Index('idx_container_exit_camera', 'exit_camera_id'),
+        Index('idx_container_current_camera', 'current_camera_id'),
+        Index('idx_container_entry_type', 'entry_type'),
+        Index('idx_container_created_at', 'created_at'),
     )
     
     def calculate_dwell_time(self):
@@ -134,8 +176,99 @@ class Container(Base):
             self.dwell_time = delta.total_seconds() / 3600.0
         return self.dwell_time
     
+    def get_track_ids_list(self) -> List[int]:
+        """Parse track IDs from JSON string."""
+        if not self.track_ids:
+            return []
+        try:
+            import json
+            return json.loads(self.track_ids)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def set_track_ids_list(self, track_ids: List[int]):
+        """Store track IDs as JSON string."""
+        import json
+        self.track_ids = json.dumps(track_ids)
+    
+    def add_track_id(self, track_id: int):
+        """Add a track ID to the list."""
+        current_ids = self.get_track_ids_list()
+        if track_id not in current_ids:
+            current_ids.append(track_id)
+            self.set_track_ids_list(current_ids)
+    
+    @property
+    def is_active(self) -> bool:
+        """Check if container is currently active."""
+        return self.status == 'active'
+    
+    @property
+    def has_moved(self) -> bool:
+        """Check if container has moved between cameras."""
+        return (self.entry_camera_id != self.current_camera_id or 
+                len(self.movements) > 1)
+    
     def __repr__(self):
-        return f"<Container(id={self.id}, number='{self.container_number}', dwell_time={self.dwell_time})>"
+        return f"<Container(id={self.id}, number='{self.container_number}', status='{self.status}', dwell_time={self.dwell_time})>"
+
+
+class ContainerMovement(Base):
+    """
+    Table for tracking container movements between cameras/locations.
+    """
+    __tablename__ = 'container_movements'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    container_id = Column(Integer, ForeignKey('containers.id'), nullable=False)
+    from_camera_id = Column(String(100))    # Source camera (can be null for initial entry)
+    to_camera_id = Column(String(100), nullable=False)  # Destination camera
+    movement_type = Column(String(20), nullable=False)  # 'entry', 'movement', 'exit'
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    track_id = Column(Integer)  # Associated tracking ID
+    confidence = Column(Float)  # Detection confidence
+    bbox_x1 = Column(Float)     # Bounding box coordinates
+    bbox_y1 = Column(Float)
+    bbox_x2 = Column(Float)
+    bbox_y2 = Column(Float)
+    ocr_confidence = Column(Float)  # OCR confidence for this detection
+    duration_from_last = Column(Float)  # Minutes since last movement
+    
+    # Relationships
+    container = relationship("Container", back_populates="movements")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_movement_container_id', 'container_id'),
+        Index('idx_movement_timestamp', 'timestamp'),
+        Index('idx_movement_from_camera', 'from_camera_id'),
+        Index('idx_movement_to_camera', 'to_camera_id'),
+        Index('idx_movement_type', 'movement_type'),
+        Index('idx_movement_track_id', 'track_id'),
+        Index('idx_movement_container_timestamp', 'container_id', 'timestamp'),
+    )
+    
+    @property
+    def bbox(self) -> dict:
+        """Return bounding box as dictionary."""
+        return {
+            'x1': self.bbox_x1,
+            'y1': self.bbox_y1,
+            'x2': self.bbox_x2,
+            'y2': self.bbox_y2
+        }
+    
+    def set_bbox(self, x1: float, y1: float, x2: float, y2: float):
+        """Set bounding box coordinates."""
+        self.bbox_x1 = x1
+        self.bbox_y1 = y1
+        self.bbox_x2 = x2
+        self.bbox_y2 = y2
+    
+    def __repr__(self):
+        return (f"<ContainerMovement(id={self.id}, container_id={self.container_id}, "
+                f"type='{self.movement_type}', from='{self.from_camera_id}', "
+                f"to='{self.to_camera_id}', timestamp={self.timestamp})>")
 
 
 class Metric(Base):
