@@ -1,0 +1,68 @@
+[global]
+# Set to false for production
+developmentMode = false
+
+# Suppress deprecation warnings
+disableWatchdogWarning = true
+
+[server]
+# Port to run the app on
+port = 8501
+
+# Address to bind to
+address = "localhost"
+
+# Enable CORS for cross-origin requests
+enableCORS = true
+
+# Enable WebSocket compression
+enableWebsocketCompression = true
+
+# Max file upload size (200MB for large images)
+maxUploadSize = 200
+
+# Session timeout (in seconds)
+headless = true
+
+[browser]
+# Automatically open browser when starting
+gatherUsageStats = false
+
+# Base URL path
+serverAddress = "localhost"
+serverPort = 8501
+
+[theme]
+# Light theme configuration
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+
+# Font
+font = "sans serif"
+
+[client]
+# Show toolbar at top of app
+toolbarMode = "auto"
+
+# Cache configuration
+caching = true
+
+[runner]
+# Run in fast rerun mode
+fastReruns = true
+
+# Don't enforce serializability of user-defined classes
+enforceSerializableSessionState = false
+
+# Automatically rerun when files change
+magicEnabled = true
+
+[mapbox]
+# Mapbox token (if using maps)
+# token = "your_mapbox_token_here"
+
+[deprecation]
+# Suppress specific warnings
+showPyplotGlobalUse = false

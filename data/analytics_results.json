@@ -1,0 +1,79 @@
+{
+  "date": "2025-09-06",
+  "metrics": {
+    "dwell_time": {
+      "total_containers": 20,
+      "avg_dwell_time": 1.2916666666666665,
+      "median_dwell_time": 1.2916666666666665,
+      "min_dwell_time": 0.5,
+      "max_dwell_time": 2.0833333333333335,
+      "std_dwell_time": 0.4930066485916347,
+      "dwell_times": [
+        0.5,
+        0.5833333333333334,
+        0.6666666666666666,
+        0.75,
+        0.8333333333333334,
+        0.9166666666666666,
+        1.0,
+        1.0833333333333333,
+        1.1666666666666667,
+        1.25,
+        1.3333333333333333,
+        1.4166666666666667,
+        1.5,
+        1.5833333333333333,
+        1.6666666666666667,
+        1.75,
+        1.8333333333333333,
+        1.9166666666666667,
+        2.0,
+        2.0833333333333335
+      ],
+      "percentile_25": 0.8958333333333333,
+      "percentile_75": 1.6875,
+      "percentile_95": 2.004166666666667
+    },
+    "throughput": {
+      "total_throughput": 20,
+      "avg_throughput_per_period": 2.857142857142857,
+      "peak_throughput": 3,
+      "min_throughput": 2,
+      "throughput_by_period": {
+        "2025-09-06T08:00:00": 2,
+        "2025-09-06T09:00:00": 3,
+        "2025-09-06T10:00:00": 3,
+        "2025-09-06T11:00:00": 3,
+        "2025-09-06T12:00:00": 3,
+        "2025-09-06T13:00:00": 3,
+        "2025-09-06T14:00:00": 3
+      },
+      "total_periods": 7,
+      "granularity": "hourly"
+    },
+    "efficiency": {
+      "avg_processing_time": 0.0,
+      "gate_utilization": 0.0,
+      "efficiency_score": 0.0,
+      "total_processed": 0,
+      "peak_efficiency_hour": null
+    },
+    "peak_hours": {
+      "peak_hours": [],
+      "hourly_averages": {},
+      "busiest_day_hour": null,
+      "quietest_day_hour": null
+    }
+  },
+  "aggregations": {
+    "hourly_data_points": 7,
+    "daily_summary": "AggregationResult(data={'2025-09-06T00:00:00': {'detections': 0, 'throughput': 20, 'containers': 20, 'avg_dwell_time': 1.2916666666666665, 'median_dwell_time': 1.2916666666666665, 'std_dwell_time': 0.4805234414446165, 'avg_confidence': 0.0, 'peak_hour': {'hour': 0, 'activity': 0}, 'hourly_distribution': {8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0}, 'total_dwell_samples': 20, 'total_confidence_samples': 0}}, period='daily', start_date=datetime.datetime(2025, 9, 6, 0, 0), end_date=datetime.datetime(2025, 9, 6, 23, 59, 59), total_records=1)"
+  },
+  "anomalies": {
+    "dwell_time": [],
+    "throughput": [],
+    "congestion": [],
+    "system": []
+  },
+  "timestamp": "2025-09-07T22:50:53.900657"
+}

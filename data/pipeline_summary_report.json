@@ -1,0 +1,45 @@
+{
+  "pipeline_run": {
+    "date": "2025-09-06",
+    "timestamp": "2025-09-07T22:50:53.900891",
+    "test_environment": "data"
+  },
+  "stages": {
+    "download": {
+      "total_images": 20,
+      "stream": "in_gate",
+      "mock_data": false
+    },
+    "detection": {
+      "images_processed": 5,
+      "total_detections": 1187,
+      "avg_detections_per_image": 237.4
+    },
+    "analytics": {
+      "metrics_calculated": [
+        "dwell_time",
+        "throughput",
+        "efficiency",
+        "peak_hours"
+      ],
+      "anomalies_detected": 4,
+      "hourly_data_points": 7
+    },
+    "database": {
+      "images": 5,
+      "detections": 0,
+      "containers": 20,
+      "metrics": 0
+    }
+  },
+  "summary": {
+    "pipeline_status": "SUCCESS",
+    "total_stages_completed": 5,
+    "key_metrics": {
+      "images_processed": 20,
+      "objects_detected": 1187,
+      "containers_tracked": 20,
+      "anomalies_found": 4
+    }
+  }
+}

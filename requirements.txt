@@ -1,0 +1,66 @@
+# Core Dependencies
+streamlit==1.28.0
+pandas>=1.5.0
+plotly>=5.17.0
+numpy>=1.24.0
+
+# Computer Vision & ML
+ultralytics>=8.0.0
+supervision>=0.16.0
+opencv-python>=4.8.0
+Pillow>=9.5.0
+
+# OCR (for container number reading)
+pytesseract>=0.3.10
+easyocr>=1.7.0
+
+# Web Scraping
+selenium>=4.15.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Database
+SQLAlchemy>=2.0.0
+alembic>=1.12.0
+
+# Scheduling & Background Tasks
+APScheduler>=3.10.0
+
+# Configuration & Environment
+python-dotenv>=1.0.0
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+
+# Utilities
+tqdm>=4.65.0
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+# Development & Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+pytest-asyncio>=0.21.0
+
+# Code Quality
+black>=23.9.0
+flake8>=6.0.0
+isort>=5.12.0
+mypy>=1.5.0
+
+# Logging & Monitoring
+loguru>=0.7.0
+
+# Performance & Caching
+redis>=5.0.0
+diskcache>=5.6.0
+
+# Image Processing
+scikit-image>=0.21.0
+
+# Additional utilities
+click>=8.1.0
+rich>=13.5.0
+
+# Web drivers (for Selenium)
+webdriver-manager>=4.0.0
