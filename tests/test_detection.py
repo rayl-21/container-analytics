@@ -34,13 +34,13 @@ class TestYOLODetector:
             
             detector = YOLODetector()
             
-            assert detector.model_path == "data/models/yolov12n.pt"
+            assert detector.model_path == "data/models/yolov12x.pt"
             assert detector.confidence_threshold == 0.5
             assert detector.iou_threshold == 0.7
             assert detector.device == "cpu"  # Should use CPU when CUDA not available
             assert detector.verbose == True
             
-            mock_yolo.assert_called_once_with("data/models/yolov12n.pt")
+            mock_yolo.assert_called_once_with("data/models/yolov12x.pt")
             mock_model.to.assert_called_once_with("cpu")
     
     def test_init_custom_params(self):
@@ -50,20 +50,20 @@ class TestYOLODetector:
             mock_yolo.return_value = mock_model
             
             detector = YOLODetector(
-                model_path="yolov8n.pt",
+                model_path="yolov12n.pt",
                 confidence_threshold=0.7,
                 iou_threshold=0.5,
                 device="cuda",
                 verbose=False
             )
             
-            assert detector.model_path == "yolov8n.pt"
+            assert detector.model_path == "yolov12n.pt"
             assert detector.confidence_threshold == 0.7
             assert detector.iou_threshold == 0.5
             assert detector.device == "cuda"
             assert detector.verbose == False
             
-            mock_yolo.assert_called_once_with("yolov8n.pt")
+            mock_yolo.assert_called_once_with("yolov12n.pt")
             mock_model.to.assert_called_once_with("cuda")
     
     @patch('torch.cuda.is_available')
@@ -401,7 +401,7 @@ class TestYOLODetectorIntegration:
         """Test loading a real YOLO model (if available)."""
         try:
             from modules.detection.yolo_detector import YOLODetector
-            detector = YOLODetector(model_path="yolov8n.pt", verbose=False)
+            detector = YOLODetector(model_path="yolov12x.pt", verbose=False)
             assert detector.model is not None
         except Exception as e:
             pytest.skip(f"YOLO model not available: {e}")

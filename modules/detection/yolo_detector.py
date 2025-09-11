@@ -1,11 +1,11 @@
 """
-YOLOv8 Object Detection Module for Container Analytics
+YOLOv12 Object Detection Module for Container Analytics
 
-This module provides YOLOv8-based object detection specifically optimized for
+This module provides YOLOv12-based object detection specifically optimized for
 detecting containers and vehicles in port gate camera images.
 
 Features:
-- Pre-trained YOLOv8 model with custom container/vehicle classes
+- Pre-trained YOLOv12 model with custom container/vehicle classes
 - Batch processing for efficiency
 - Configurable confidence thresholds
 - GPU acceleration support
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 class YOLODetector:
     """
-    YOLOv8-based object detector for containers and vehicles.
+    YOLOv12-based object detector for containers and vehicles.
     
     This class wraps the ultralytics YOLO model and provides methods for
     detecting objects in single images or batch processing multiple images.
@@ -47,7 +47,7 @@ class YOLODetector:
     
     def __init__(
         self,
-        model_path: str = "yolov12n.pt",
+        model_path: str = "yolov12x.pt",
         confidence_threshold: float = 0.5,
         iou_threshold: float = 0.7,
         device: Optional[str] = None,
@@ -57,7 +57,7 @@ class YOLODetector:
         Initialize the YOLO detector.
         
         Args:
-            model_path: Path to YOLO model weights (default: yolov12n.pt turbo model)
+            model_path: Path to YOLO model weights (default: yolov12x.pt)
             confidence_threshold: Minimum confidence score for detections
             iou_threshold: IoU threshold for Non-Maximum Suppression
             device: Device to run inference on ('cpu', 'cuda', or None for auto)
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YOLO Container Detector")
     parser.add_argument("--image", type=str, help="Path to image file")
     parser.add_argument("--batch", type=str, help="Path to directory with images")
-    parser.add_argument("--model", type=str, default="yolov8x.pt", help="Model path")
+    parser.add_argument("--model", type=str, default="yolov12x.pt", help="Model path")
     parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold")
     parser.add_argument("--device", type=str, help="Device (cpu/cuda)")
     parser.add_argument("--output", type=str, help="Output directory for annotated images")

@@ -1,6 +1,6 @@
 # Container Analytics
 
-A Python-based MVP application that automatically downloads port gate camera images from Dray Dog and derives analytics using YOLOv8 computer vision with a Streamlit dashboard for visualization.
+A Python-based MVP application that automatically downloads port gate camera images from Dray Dog and derives analytics using YOLOv12 computer vision with a Streamlit dashboard for visualization.
 
 **Last Updated**: 2025-09-11 | **Status**: Production-Ready Pipeline with Automated Scheduling
 
@@ -41,7 +41,7 @@ container-analytics/
 │   └── 4_⚙️_Settings.py        # Configuration
 ├── modules/
 │   ├── downloader/             # Selenium-based image collection (70% coverage)
-│   ├── detection/              # YOLOv8 computer vision
+│   ├── detection/              # YOLOv12 computer vision
 │   ├── analytics/              # Analytics engine
 │   └── database/               # SQLAlchemy ORM (89% coverage)
 ├── deployment/                 # Production deployment configs
@@ -61,7 +61,7 @@ container-analytics/
 - ✅ **Database Layer**: SQLAlchemy ORM with SQLite (89% test coverage)
 - ✅ **Analytics Engine**: KPI calculations for dwell time, throughput, efficiency
 - ✅ **Real Data Pipeline**: Complete with database persistence and monitoring
-- 🔄 **YOLO Detection**: Container and vehicle detection with YOLOv8 (in progress)
+- 🔄 **YOLO Detection**: Container and vehicle detection with YOLOv12 (in progress)
 - 🔄 **Container Tracking**: Object tracking across frames with ByteTrack
 - 🔄 **OCR Module**: Container number extraction
 - 🔄 **Alert System**: Anomaly detection and notifications

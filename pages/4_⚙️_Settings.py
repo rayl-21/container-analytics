@@ -447,7 +447,7 @@ def create_detection_settings_section(config: Dict) -> Dict:
                 help="Maximum frames to keep tracking inactive objects"
             )
         
-        model_options = ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt"]
+        model_options = ["yolov12n.pt", "yolov12s.pt", "yolov12m.pt", "yolov12l.pt", "yolov12x.pt"]
         current_model = config["detection"]["model_path"]
         if current_model not in model_options:
             model_options.append(current_model)

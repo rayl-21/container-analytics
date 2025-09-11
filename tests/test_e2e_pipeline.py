@@ -253,7 +253,7 @@ class TestEndToEndPipeline:
         
         # Initialize YOLO detector - will now automatically use data/models/
         detector = YOLODetector(
-            model_path="yolov8n.pt",  # Will be resolved to data/models/yolov8n.pt
+            model_path="yolov12n.pt",  # Will be resolved to data/models/yolov12n.pt
             confidence_threshold=0.25,
             iou_threshold=0.45,
             device="cpu",  # Use CPU for CI/CD compatibility
@@ -677,7 +677,7 @@ def test_today_simple_pipeline():
     # 4. Run YOLO detection
     logger.info("\n4. Running YOLO detection...")
     detector = YOLODetector(
-        model_path="yolov8n.pt",
+        model_path="yolov12n.pt",
         confidence_threshold=0.25,
         verbose=False
     )

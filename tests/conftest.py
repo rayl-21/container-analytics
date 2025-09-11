@@ -267,7 +267,7 @@ def downloader_config():
 def detector_config():
     """Configuration for YOLODetector tests."""
     return {
-        'model_path': 'yolov8n.pt',  # Use nano model for faster tests
+        'model_path': 'yolov12n.pt',  # Use nano model for faster tests
         'confidence_threshold': 0.5,
         'iou_threshold': 0.7,
         'device': 'cpu',  # Force CPU for consistent test environment
@@ -387,7 +387,7 @@ def requires_gpu():
 def requires_model_file():
     """Skip test if YOLO model file is not available."""
     from pathlib import Path
-    model_path = Path("data/models/yolov8x.pt")
+    model_path = Path("data/models/yolov12x.pt")
     return not model_path.exists()
 
 

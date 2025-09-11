@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Container Analytics - A Python-based MVP application that automatically downloads port gate camera images from Dray Dog (no login required - direct public access) and derives analytics using YOLOv8 computer vision with a Streamlit dashboard for visualization.
+Container Analytics - A Python-based MVP application that automatically downloads port gate camera images from Dray Dog (no login required - direct public access) and derives analytics using YOLOv12 computer vision with a Streamlit dashboard for visualization.
 
 ## Current Status: MVP Development Phase
 **Last Updated**: 2025-09-11
@@ -21,7 +21,7 @@ Container Analytics - A Python-based MVP application that automatically download
 - **Deployment Configs**: systemd service and Docker compose for production
 
 ### In Progress 🔄
-- **Detection Module**: YOLOv8 integration with container tracking
+- **Detection Module**: YOLOv12 integration with container tracking
 - **Streamlit Dashboard**: Multi-page application with real-time updates
 - **Container OCR**: Number recognition system for container IDs
 
@@ -30,7 +30,7 @@ Container Analytics - A Python-based MVP application that automatically download
 ### Core Technologies
 - **Python 3.10+** - Primary language
 - **Streamlit 1.28.0** - Dashboard framework (10x faster development than Flask)
-- **YOLOv8 (ultralytics)** - Object detection with real-time processing (30+ FPS)
+- **YOLOv12 (ultralytics)** - Attention-centric object detection with real-time processing (30+ FPS)
 - **Selenium 4.15+** - Automated image downloading from Dray Dog
 - **SQLite + SQLAlchemy 2.0** - Data persistence with ORM
 - **Pandas 1.5+** - Data analysis and aggregation
@@ -58,7 +58,7 @@ container-analytics/
 │   │   ├── selenium_client.py  # Selenium WebDriver automation
 │   │   └── scheduler.py        # APScheduler for automated downloads
 │   ├── detection/              # Computer vision module
-│   │   ├── yolo_detector.py    # YOLOv8 implementation
+│   │   ├── yolo_detector.py    # YOLOv12 implementation
 │   │   ├── tracker.py          # Multi-object tracking
 │   │   └── ocr.py              # Container number OCR
 │   ├── analytics/              # Analytics engine
@@ -85,7 +85,7 @@ container-analytics/
 │   └── test_e2e_pipeline.py   # End-to-end pipeline tests
 ├── data/                      # Data storage
 │   ├── images/                # Downloaded camera images
-│   ├── models/                # YOLO model weights (yolov8n.pt)
+│   ├── models/                # YOLO model weights (yolov12x.pt)
 │   └── database.db            # SQLite database
 ├── deployment/                # Production deployment configs
 │   ├── systemd/              # Linux service configuration
@@ -175,12 +175,12 @@ import supervision as sv
 
 class ContainerDetector:
     def __init__(self):
-        self.model = YOLO('data/models/yolov8n.pt')  # Use model from data/models/
+        self.model = YOLO('data/models/yolov12x.pt')  # Use model from data/models/
         self.tracker = sv.ByteTrack()
         
     def process_image(self, image_path):
         results = self.model(image_path)
-        detections = sv.Detections.from_yolov8(results[0])
+        detections = sv.Detections.from_ultralytics(results[0])
         tracked = self.tracker.update_with_detections(detections)
         return tracked
 ```

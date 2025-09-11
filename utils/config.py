@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     
     # YOLO Model Configuration
     yolo_model_path: Path = Field(
-        default=Path("data/models/yolov8x.pt"),
+        default=Path("data/models/yolov12x.pt"),
         description="Path to YOLO model weights"
     )
     detection_confidence_threshold: float = Field(

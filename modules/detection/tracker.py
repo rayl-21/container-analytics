@@ -415,7 +415,7 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, help="Path to video file")
     parser.add_argument("--images", type=str, help="Path to directory with sequential images")
     parser.add_argument("--output", type=str, help="Output directory for annotated frames")
-    parser.add_argument("--model", type=str, default="yolov8x.pt", help="YOLO model path")
+    parser.add_argument("--model", type=str, default="yolov12x.pt", help="YOLO model path")
     
     args = parser.parse_args()
     

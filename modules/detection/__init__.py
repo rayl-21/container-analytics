@@ -5,7 +5,7 @@ This module provides computer vision capabilities for container detection,
 tracking, and OCR functionality.
 
 Components:
-- YOLODetector: YOLOv8-based object detection for containers and vehicles
+- YOLODetector: YOLOv12-based object detection for containers and vehicles
 - ContainerTracker: ByteTrack-based object tracking with dwell time calculation
 - ContainerOCR: OCR for extracting container numbers from detected containers
 

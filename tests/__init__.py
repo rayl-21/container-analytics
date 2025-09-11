@@ -5,7 +5,7 @@ This package contains comprehensive tests for the Container Analytics project.
 
 Test modules:
 - test_downloader.py: Tests for image downloading from Dray Dog
-- test_detection.py: Tests for YOLOv8 object detection
+- test_detection.py: Tests for YOLOv12 object detection
 - test_database.py: Tests for database models and operations
 - test_analytics.py: Tests for metrics and analytics calculations
 
