@@ -223,6 +223,161 @@ All models use proper indexes for performance and foreign key constraints for da
 - Daily summary reports via email
 - Real-time dashboard updates via WebSocket
 
+## Git Workflow & Parallel Development Strategy
+
+### Branch Strategy (GitFlow Model)
+- **main** - Production-ready code only
+- **develop** - Integration branch for feature merging
+- **feature/** - Individual feature branches (e.g., `feature/detection-yolo`, `feature/dashboard-websocket`)
+- **hotfix/** - Emergency production fixes
+- **release/** - Release preparation and testing
+
+### Parallel Development Workflow
+
+#### 1. Initial Setup
+```bash
+# Configure Git for better collaboration
+git config pull.rebase true
+git config branch.autosetuprebase always
+
+# Create develop branch if not exists
+git checkout -b develop
+git push -u origin develop
+```
+
+#### 2. Feature Development Process
+```bash
+# Start new feature (always branch from develop)
+git checkout develop
+git pull origin develop
+git checkout -b feature/your-feature-name
+
+# Work on feature with frequent commits
+git add -A
+git commit -m "feat(module): descriptive message"
+
+# Before pushing, ensure code quality
+pytest tests/                    # Run tests
+black . && flake8                # Format and lint
+git push -u origin feature/your-feature-name
+```
+
+#### 3. Merging Strategy
+```bash
+# Update feature branch with latest develop
+git checkout feature/your-feature
+git fetch origin
+git rebase origin/develop        # Preferred over merge for cleaner history
+
+# After PR approval, merge to develop
+git checkout develop
+git merge --no-ff feature/your-feature  # Preserve feature history
+git push origin develop
+```
+
+### Parallel Session Organization
+
+#### Module-Based Sessions
+- **Session 1 (Main)**: Coordination, integration, conflict resolution
+- **Session 2 (Backend)**: `modules/detection/` and `modules/analytics/`
+- **Session 3 (Frontend)**: `app.py`, `pages/`, `components/`
+- **Session 4 (Infrastructure)**: `modules/database/`, `utils/`, `tests/`
+
+#### Task Parallelization Example
+```bash
+# Terminal 1: Detection Module
+git checkout -b feature/detection-improvements
+# Focus: modules/detection/, tests/test_detection.py
+
+# Terminal 2: Dashboard Development
+git checkout -b feature/dashboard-realtime
+# Focus: app.py, pages/, components/
+
+# Terminal 3: Testing & Quality
+git checkout -b feature/increase-coverage
+# Focus: tests/, quality checks
+```
+
+### Conflict Prevention
+
+#### Best Practices
+- **Module Ownership**: Assign clear ownership per module
+- **Interface Stability**: Keep module interfaces stable during parallel work
+- **File Separation**: Create new files rather than heavily modifying shared ones
+- **Communication**: Document changes in PR descriptions
+
+#### Daily Workflow
+1. **Morning**: Pull latest from `develop`, create/update feature branches
+2. **During Day**: Work in parallel sessions, commit frequently (every 1-2 hours)
+3. **Evening**: Push changes, create PRs, review team's work
+4. **Before Merge**: Run full test suite, ensure 80%+ coverage
+
+### Commit Message Convention
+```
+feat(module): Add new feature
+fix(module): Fix bug description
+refactor(module): Restructure code
+test(module): Add/update tests
+docs: Update documentation
+style: Format code (Black, flake8)
+perf: Performance improvements
+```
+
+### Pre-commit Hooks Setup
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Create .pre-commit-config.yaml
+cat > .pre-commit-config.yaml << 'EOF'
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest tests/ --fail-under=70
+        language: system
+        pass_filenames: false
+EOF
+
+# Install hooks
+pre-commit install
+```
+
+### CI/CD with GitHub Actions
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ --cov=modules --cov-report=term-missing
+      - run: black --check .
+      - run: flake8
+```
+
+### Pull Request Guidelines
+- Keep PRs small and focused (< 400 lines changed)
+- Include tests for new features
+- Update documentation if needed
+- Link to relevant issues
+- Request review from module owner
+
 ## Important Notes
 
 - Always use virtual environment for development
@@ -231,3 +386,7 @@ All models use proper indexes for performance and foreign key constraints for da
 - Never commit `.env` files or credentials
 - Run tests before committing: `pytest tests/`
 - Update this file when architecture changes significantly
+- Use feature branches for ALL development work
+- Never push directly to `main` or `develop`
+- Resolve conflicts locally before pushing
+- Keep commit history clean with meaningful messages
