@@ -1,7 +1,7 @@
 {
   "pipeline_run": {
     "date": "2025-09-06",
-    "timestamp": "2025-09-11T11:17:07.744772",
+    "timestamp": "2025-09-11T15:08:20.369019",
     "test_environment": "/Users/rayli/Documents/container-analytics/data"
   },
   "stages": {
@@ -26,9 +26,9 @@
       "hourly_data_points": 7
     },
     "database": {
-      "images": 6,
+      "images": 0,
       "detections": 0,
-      "containers": 20,
+      "containers": 0,
       "metrics": 0
     }
   },
@@ -38,7 +38,7 @@
     "key_metrics": {
       "images_processed": 1,
       "objects_detected": 513,
-      "containers_tracked": 20,
+      "containers_tracked": 0,
       "anomalies_found": 4
     }
   }
