@@ -1108,3 +1108,159 @@ class TestScheduler:
             assert "DB Total Images:      100" in captured.out
             assert "DB Processed Images:  90" in captured.out
             assert "DB Processing Rate:   90.0%" in captured.out
+
+    def test_load_stats_from_json_fallback(self, temp_dir):
+        """Test loading stats from JSON when database fails."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create JSON stats file
+        stats_file = temp_dir / "scheduler_stats.json"
+        stats_data = {
+            "total_runs": 3,
+            "successful_runs": 2,
+            "failed_runs": 1,
+            "total_images": 15,
+            "last_run_time": "2025-01-15T10:30:00",
+            "last_success_time": "2025-01-15T10:30:00",
+            "last_error": "Connection timeout",
+        }
+        stats_file.write_text(json.dumps(stats_data))
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database failure
+            mock_session_scope.side_effect = Exception("Database not available")
+            mock_get_stats.side_effect = Exception("Database error")
+
+            scheduler = ImageDownloadScheduler(config)
+
+            # Should have loaded only JSON stats
+            assert scheduler.stats.total_runs == 3
+            assert scheduler.stats.successful_runs == 2
+            assert scheduler.stats.total_images == 15
+            assert scheduler.database_available == False
+
+    def test_save_to_database_timestamp_parsing(self, temp_dir):
+        """Test timestamp parsing in save_to_database method."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create test file with complex timestamp format
+        test_file = temp_dir / "2025-01-15T14-35-12-in_gate.jpg"
+        test_file.write_text("test image content")
+        test_files = [str(test_file)]
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session.query.return_value.filter.return_value.first.return_value = (
+                None
+            )
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+            scheduler.save_to_database(test_files, "in_gate")
+
+            # Verify image was saved with parsed timestamp
+            assert mock_session.add.called
+            saved_image = mock_session.add.call_args[0][0]
+            assert saved_image.timestamp.hour == 14
+            assert saved_image.timestamp.minute == 35
+
+    def test_save_to_database_error_handling(self, temp_dir):
+        """Test error handling in save_to_database method."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        # Create test file
+        test_file = temp_dir / "test_image.jpg"
+        test_file.write_text("test image content")
+        test_files = [str(test_file)]
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection but session.add fails
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session.query.return_value.filter.return_value.first.return_value = (
+                None
+            )
+            mock_session.add.side_effect = Exception("Database write error")
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+
+            # Should not raise exception, just log error
+            scheduler.save_to_database(test_files, "in_gate")
+
+    def test_database_validation_method_directly(self, temp_dir):
+        """Test database validation method directly."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock database connection that returns None
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = None
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+
+            # Database should be marked as unavailable
+            assert scheduler.database_available == False
+
+    def test_get_stats_database_error_handling(self, temp_dir):
+        """Test get_stats handles database errors gracefully."""
+        config = DownloadConfig(
+            stream_names=["in_gate"], download_dir=str(temp_dir), interval_minutes=10
+        )
+
+        with patch(
+            "modules.downloader.scheduler.session_scope"
+        ) as mock_session_scope, patch(
+            "modules.downloader.scheduler.get_image_stats"
+        ) as mock_get_stats:
+
+            # Mock successful database connection but get_stats fails later
+            mock_session = Mock()
+            mock_session.execute.return_value.fetchone.return_value = [1]
+            mock_session_scope.return_value.__enter__.return_value = mock_session
+            mock_get_stats.return_value = {"total_images": 0}
+
+            scheduler = ImageDownloadScheduler(config)
+            assert scheduler.database_available == True
+
+            # Make get_image_stats fail when called from get_stats
+            mock_get_stats.side_effect = Exception("Database query failed")
+
+            stats = scheduler.get_stats()
+
+            # Should fall back gracefully
+            assert stats["database_available"] == False

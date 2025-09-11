@@ -23,6 +23,13 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from loguru import logger
 
 from .selenium_client import DrayDogDownloader
+from modules.database.models import (
+    Image,
+    get_session,
+    session_scope,
+    get_database_stats,
+)
+from modules.database.queries import get_image_stats, get_recent_images
 
 
 @dataclass
@@ -79,9 +86,13 @@ class ImageDownloadScheduler:
         self.stats = DownloadStats()
         self.is_running = False
         self._shutdown_event = threading.Event()
+        self.database_available = False
 
         # Setup logging
         self._setup_logging()
+
+        # Validate database connection
+        self._validate_database_connection()
 
         # Load existing stats if available
         self._load_stats()
@@ -90,6 +101,23 @@ class ImageDownloadScheduler:
         self._setup_signal_handlers()
 
         logger.info("ImageDownloadScheduler initialized")
+
+    def _validate_database_connection(self):
+        """Validate database connection and set availability flag."""
+        try:
+            with session_scope() as session:
+                # Test basic database connectivity
+                result = session.execute("SELECT 1").fetchone()
+                if result:
+                    self.database_available = True
+                    logger.info("Database connection validated successfully")
+                else:
+                    logger.warning("Database connection test failed")
+        except Exception as e:
+            logger.warning(
+                f"Database not available: {e}. Scheduler will continue with file-based stats."
+            )
+            self.database_available = False
 
     def _setup_logging(self):
         """Configure logging for the scheduler."""
@@ -121,7 +149,53 @@ class ImageDownloadScheduler:
         atexit.register(self.cleanup)
 
     def _load_stats(self):
-        """Load existing statistics from file."""
+        """Load existing statistics from database or fallback to JSON file."""
+        if self.database_available:
+            try:
+                # Try to load stats from database
+                db_stats = get_image_stats()
+
+                # Convert database stats to DownloadStats format
+                self.stats.total_images = db_stats.get("total_images", 0)
+
+                # For scheduler-specific stats, we'll still use the JSON file
+                # since database doesn't track runs/failures yet
+                stats_file = os.path.join(
+                    self.config.download_dir, "scheduler_stats.json"
+                )
+                if os.path.exists(stats_file):
+                    with open(stats_file, "r") as f:
+                        stats_data = json.load(f)
+
+                    # Convert datetime strings back to datetime objects
+                    if stats_data.get("last_run_time"):
+                        stats_data["last_run_time"] = datetime.fromisoformat(
+                            stats_data["last_run_time"]
+                        )
+                    if stats_data.get("last_success_time"):
+                        stats_data["last_success_time"] = datetime.fromisoformat(
+                            stats_data["last_success_time"]
+                        )
+
+                    # Load scheduler-specific stats but preserve database image count
+                    total_images = self.stats.total_images
+                    self.stats = DownloadStats(**stats_data)
+                    self.stats.total_images = total_images
+
+                logger.info(
+                    "Loaded existing scheduler statistics from database and JSON file"
+                )
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load database stats, falling back to JSON: {e}"
+                )
+                self._load_stats_from_json()
+        else:
+            self._load_stats_from_json()
+
+    def _load_stats_from_json(self):
+        """Fallback method to load stats from JSON file."""
         stats_file = os.path.join(self.config.download_dir, "scheduler_stats.json")
 
         try:
@@ -140,10 +214,10 @@ class ImageDownloadScheduler:
                     )
 
                 self.stats = DownloadStats(**stats_data)
-                logger.info("Loaded existing scheduler statistics")
+                logger.info("Loaded existing scheduler statistics from JSON file")
 
         except Exception as e:
-            logger.warning(f"Failed to load scheduler stats: {e}")
+            logger.warning(f"Failed to load scheduler stats from JSON: {e}")
 
     def _save_stats(self):
         """Save current statistics to file."""
@@ -205,6 +279,10 @@ class ImageDownloadScheduler:
                             f"Downloaded {downloaded_count} images for stream {stream_name}"
                         )
 
+                        # Save downloaded images to database
+                        if downloaded_files:
+                            self.save_to_database(downloaded_files, stream_name)
+
                 except Exception as e:
                     error_msg = (
                         f"Failed to download images for stream {stream_name}: {str(e)}"
@@ -243,6 +321,97 @@ class ImageDownloadScheduler:
 
         finally:
             self._save_stats()
+
+    def save_to_database(self, downloaded_files: List[str], stream_name: str):
+        """
+        Save downloaded image files to database.
+
+        Args:
+            downloaded_files: List of file paths that were successfully downloaded
+            stream_name: Camera stream name (used as camera_id)
+        """
+        if not self.database_available:
+            logger.debug("Database not available, skipping database save")
+            return
+
+        saved_count = 0
+        errors = []
+
+        try:
+            for file_path in downloaded_files:
+                try:
+                    # Extract timestamp from filename if possible
+                    filename = os.path.basename(file_path)
+
+                    # Parse timestamp from filename (format: YYYY-MM-DDTHH-MM-SS-stream_name.jpg)
+                    timestamp = None
+                    try:
+                        if "T" in filename and "-" in filename:
+                            # Extract just the timestamp part: 2025-01-15T14-35-12
+                            parts = filename.split("-")
+                            if len(parts) >= 4:  # YYYY-MM-DDTHH-MM-SS
+                                date_part = (
+                                    parts[0] + "-" + parts[1] + "-" + parts[2]
+                                )  # 2025-01-15THH
+                                time_hour = (
+                                    date_part.split("T")[1]
+                                    if "T" in date_part
+                                    else parts[3]
+                                )  # HH
+                                time_min = (
+                                    parts[3] if "T" in date_part else parts[4]
+                                )  # MM
+                                time_sec = (
+                                    parts[4] if "T" in date_part else parts[5]
+                                )  # SS
+
+                                # Reconstruct as proper ISO format: 2025-01-15T14:35:12
+                                iso_timestamp = f"{date_part.split('T')[0]}T{time_hour}:{time_min}:{time_sec}"
+                                timestamp = datetime.fromisoformat(iso_timestamp)
+                    except:
+                        # Use file creation time if timestamp parsing fails
+                        timestamp = datetime.fromtimestamp(os.path.getctime(file_path))
+
+                    # Get file size
+                    file_size = (
+                        os.path.getsize(file_path)
+                        if os.path.exists(file_path)
+                        else None
+                    )
+
+                    # Insert into database
+                    with session_scope() as session:
+                        # Check if image already exists
+                        existing = (
+                            session.query(Image)
+                            .filter(Image.filepath == file_path)
+                            .first()
+                        )
+                        if not existing:
+                            image = Image(
+                                filepath=file_path,
+                                camera_id=stream_name,
+                                timestamp=timestamp or datetime.utcnow(),
+                                file_size=file_size,
+                                processed=False,
+                            )
+                            session.add(image)
+                            saved_count += 1
+                            logger.debug(f"Saved image to database: {filename}")
+
+                except Exception as e:
+                    error_msg = f"Failed to save {file_path} to database: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            if saved_count > 0:
+                logger.info(f"Successfully saved {saved_count} images to database")
+
+            if errors:
+                logger.warning(f"Database save completed with {len(errors)} errors")
+
+        except Exception as e:
+            logger.error(f"Database save operation failed: {e}")
 
     def _cleanup_old_images(self):
         """Remove images older than configured retention period."""
@@ -372,7 +541,7 @@ class ImageDownloadScheduler:
 
     def get_stats(self) -> Dict:
         """
-        Get current download statistics.
+        Get current download statistics with database integration.
 
         Returns:
             Dictionary containing download statistics
@@ -393,6 +562,40 @@ class ImageDownloadScheduler:
             else 0
         )
         stats_dict["average_images_per_run"] = f"{avg_images:.1f}"
+
+        # Add database-specific information if available
+        if self.database_available:
+            try:
+                db_stats = get_image_stats()
+                stats_dict.update(
+                    {
+                        "database_total_images": db_stats.get("total_images", 0),
+                        "database_processed_images": db_stats.get(
+                            "processed_images", 0
+                        ),
+                        "database_unprocessed_images": db_stats.get(
+                            "unprocessed_images", 0
+                        ),
+                        "database_processing_rate": db_stats.get("processing_rate", 0),
+                        "database_available": True,
+                    }
+                )
+
+                # Update total_images from database if higher (more accurate)
+                db_total = db_stats.get("total_images", 0)
+                if db_total > stats_dict.get("total_images", 0):
+                    stats_dict["total_images"] = db_total
+                    # Recalculate average with updated total
+                    if self.stats.successful_runs > 0:
+                        stats_dict["average_images_per_run"] = (
+                            f"{db_total / self.stats.successful_runs:.1f}"
+                        )
+
+            except Exception as e:
+                logger.warning(f"Failed to get database stats: {e}")
+                stats_dict["database_available"] = False
+        else:
+            stats_dict["database_available"] = False
 
         return stats_dict
 
@@ -416,6 +619,22 @@ class ImageDownloadScheduler:
             print(f"Last Success:         {stats['last_success_time']}")
         if stats["last_error"]:
             print(f"Last Error:           {stats['last_error']}")
+
+        # Database statistics if available
+        if stats.get("database_available"):
+            print("\nDATABASE STATISTICS:")
+            print(f"DB Total Images:      {stats.get('database_total_images', 'N/A')}")
+            print(
+                f"DB Processed Images:  {stats.get('database_processed_images', 'N/A')}"
+            )
+            print(
+                f"DB Unprocessed Images:{stats.get('database_unprocessed_images', 'N/A')}"
+            )
+            print(
+                f"DB Processing Rate:   {stats.get('database_processing_rate', 'N/A')}%"
+            )
+        else:
+            print("\nDatabase: Not Available (using file-based stats)")
 
         print("=" * 50)
 
