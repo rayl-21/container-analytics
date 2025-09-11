@@ -1,0 +1,286 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Container Analytics Monitoring",
+    "tags": ["container-analytics"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": []
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "container_analytics_service_status",
+            "legendFormat": "{{service_name}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"type": "value", "value": "0", "text": "DOWN"},
+              {"type": "value", "value": "1", "text": "UP"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Images Downloaded",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_analytics_images_downloaded_total[5m])",
+            "legendFormat": "{{stream_name}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "yAxes": [
+          {
+            "label": "Images/sec",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Detection Processing Queue",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "container_analytics_queue_size",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 6
+        },
+        "valueName": "current",
+        "colorBackground": true,
+        "thresholds": "10,50"
+      },
+      {
+        "id": 4,
+        "title": "Processing Duration",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(container_analytics_processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile - {{operation}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(container_analytics_processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "50th percentile - {{operation}}",
+            "refId": "B"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 18,
+          "x": 6,
+          "y": 6
+        },
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Detection Accuracy",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "container_analytics_detection_accuracy",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 0,
+          "y": 12
+        },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 70},
+                {"color": "green", "value": 90}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Database Size",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "container_analytics_database_size_bytes",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 3,
+          "w": 8,
+          "x": 8,
+          "y": 12
+        },
+        "format": "bytes",
+        "valueName": "current"
+      },
+      {
+        "id": 7,
+        "title": "Disk Usage by Directory",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "container_analytics_disk_usage_bytes",
+            "legendFormat": "{{directory}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 16,
+          "y": 12
+        }
+      },
+      {
+        "id": 8,
+        "title": "Container Detections Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_analytics_detections_total[5m])",
+            "legendFormat": "{{stream_name}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 18
+        },
+        "yAxes": [
+          {
+            "label": "Detections/sec",
+            "min": 0
+          },
+          {
+            "show": false
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Last Download Times",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "container_analytics_last_download_timestamp * 1000",
+            "legendFormat": "{{stream_name}}",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 12,
+          "y": 18
+        },
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true,
+                "instance": true,
+                "job": true
+              },
+              "renameByName": {
+                "stream_name": "Stream",
+                "Value": "Last Download"
+              }
+            }
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Last Download"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "dateTimeAsIso"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": {
+      "list": []
+    }
+  }
+}
