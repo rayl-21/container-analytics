@@ -84,18 +84,32 @@ def load_metrics(date_range: int = 24) -> Dict:
     start_time = current_time - timedelta(hours=date_range)
     
     # Get real data from database
-    stats = queries.get_container_statistics(start_date=start_time, end_date=current_time)
-    recent_detections_data = queries.get_recent_detections(limit=10, object_type='container')
+    try:
+        stats = queries.get_container_statistics(start_date=start_time, end_date=current_time)
+        recent_detections_data = queries.get_recent_detections(limit=10, object_type='container')
+    except Exception as e:
+        st.error(f"Database connection error: {str(e)}")
+        stats = {'total_containers': 0, 'average_dwell_time': 0}
+        recent_detections_data = []
     
     # Calculate container movements
-    containers_in = queries.get_container_movements(start_time, current_time, direction='in')
-    containers_out = queries.get_container_movements(start_time, current_time, direction='out')
+    try:
+        containers_in = queries.get_container_movements(start_time, current_time, direction='in')
+        containers_out = queries.get_container_movements(start_time, current_time, direction='out')
+    except Exception as e:
+        st.warning(f"Could not load movement data: {str(e)}")
+        containers_in = 0
+        containers_out = 0
     
     # Get current occupancy
-    with session_scope() as session:
-        current_occupancy = session.query(Container).filter(
-            Container.status == 'active'
-        ).count()
+    try:
+        with session_scope() as session:
+            current_occupancy = session.query(Container).filter(
+                Container.status == 'active'
+            ).count()
+    except Exception as e:
+        st.warning(f"Could not load occupancy data: {str(e)}")
+        current_occupancy = 0
     
     max_capacity = 500  # This could be a config setting
     
@@ -144,7 +158,11 @@ def load_hourly_trends() -> pd.DataFrame:
     start_time = current_time - timedelta(hours=24)
     
     # Get metrics from database
-    metrics = queries.get_metrics_by_date_range(start_time, current_time)
+    try:
+        metrics = queries.get_metrics_by_date_range(start_time, current_time)
+    except Exception as e:
+        st.warning(f"Could not load historical metrics: {str(e)}")
+        metrics = []
     
     if metrics:
         # Group by hour and aggregate
@@ -286,11 +304,22 @@ def main():
     try:
         metrics = load_metrics(time_range)
         trends_data = load_hourly_trends()
+        
+        # Check if we have any real data
+        if metrics['total_containers'] == 0 and len(metrics['recent_detections']) == 0:
+            st.info("📥 No container data available yet. The dashboard will populate as the system processes images and detections.")
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-        st.info("Using simulated data for demonstration.")
-        metrics = load_metrics(time_range)
-        trends_data = load_hourly_trends()
+        st.error(f"⚠️ Error loading data: {str(e)}")
+        st.info("Please check the database connection and ensure the system is properly configured.")
+        
+        # Provide fallback empty metrics
+        metrics = {
+            'total_containers': 0, 'containers_in': 0, 'containers_out': 0,
+            'avg_dwell_time': 0, 'current_occupancy': 0, 'max_capacity': 500,
+            'occupancy_rate': 0, 'recent_detections': [], 'system_status': {'database': 'error'},
+            'last_updated': datetime.now()
+        }
+        trends_data = pd.DataFrame({'hour': [], 'containers_in': [], 'containers_out': []})
     
     # Key metrics row
     col1, col2, col3, col4 = st.columns(4)
@@ -320,7 +349,7 @@ def main():
         display_metric_card(
             "In/Out Ratio",
             f"{metrics['containers_in']}/{metrics['containers_out']}",
-            "Balanced flow"
+    "Balanced flow" if metrics['containers_in'] > 0 or metrics['containers_out'] > 0 else "No activity"
         )
     
     st.divider()
@@ -369,20 +398,27 @@ def main():
     with col2:
         st.markdown("### Recent Detections")
         
-        for detection in metrics["recent_detections"]:
-            action_color = "#28a745" if detection["action"] == "IN" else "#dc3545"
-            confidence_percent = int(detection["confidence"] * 100)
-            
-            st.markdown(f"""
-            <div style="padding: 0.5rem; margin: 0.25rem 0; border-left: 3px solid {action_color}; background-color: #f8f9fa;">
-                <strong>{detection['time']}</strong><br>
-                {detection['container_id']}<br>
-                <span style="color: {action_color};">{detection['action']}</span> | {confidence_percent}% confidence
-            </div>
-            """, unsafe_allow_html=True)
+        if metrics["recent_detections"]:
+            for detection in metrics["recent_detections"]:
+                action_color = "#28a745" if detection["action"] == "IN" else "#dc3545"
+                confidence_percent = int(detection["confidence"] * 100)
+                
+                st.markdown(f"""
+                <div style="padding: 0.5rem; margin: 0.25rem 0; border-left: 3px solid {action_color}; background-color: #f8f9fa;">
+                    <strong>{detection['time']}</strong><br>
+                    {detection['container_id']}<br>
+                    <span style="color: {action_color};">{detection['action']}</span> | {confidence_percent}% confidence
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("💤 No recent detections. System is ready for container activity.")
         
-        if st.button("View All Detections"):
-            st.markdown("[Go to Live Feed →](/Live_Feed)")
+        if len(metrics["recent_detections"]) > 0:
+            if st.button("View All Detections"):
+                st.switch_page("pages/2_🖼️_Live_Feed.py")
+        else:
+            if st.button("Go to Live Feed"):
+                st.switch_page("pages/2_🖼️_Live_Feed.py")
     
     st.divider()
     
