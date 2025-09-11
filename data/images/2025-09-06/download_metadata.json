@@ -1,29 +1,10 @@
 {
   "date": "2025-09-06",
   "stream": "in_gate",
-  "total_images": 20,
-  "download_timestamp": "2025-09-07T22:50:53.562158",
+  "total_images": 1,
+  "download_timestamp": "2025-09-11T11:08:10.350964",
   "files": [
-    "data/images/2025-09-06/20250906T230734_in_gate.jpg",
-    "data/images/2025-09-06/20250906T231734_in_gate.jpg",
-    "data/images/2025-09-06/20250906T232756_in_gate.jpg",
-    "data/images/2025-09-06/20250906T233934_in_gate.jpg",
-    "data/images/2025-09-06/20250906T234956_in_gate.jpg",
-    "data/images/2025-09-06/20250906T235734_in_gate.jpg",
-    "data/images/2025-09-06/20250906T220947_in_gate.jpg",
-    "data/images/2025-09-06/20250906T221943_in_gate.jpg",
-    "data/images/2025-09-06/20250906T222800_in_gate.jpg",
-    "data/images/2025-09-06/20250906T223956_in_gate.jpg",
-    "data/images/2025-09-06/20250906T224823_in_gate.jpg",
-    "data/images/2025-09-06/20250906T225931_in_gate.jpg",
-    "data/images/2025-09-06/20250906T210740_in_gate.jpg",
-    "data/images/2025-09-06/20250906T211711_in_gate.jpg",
-    "data/images/2025-09-06/20250906T212903_in_gate.jpg",
-    "data/images/2025-09-06/20250906T213714_in_gate.jpg",
-    "data/images/2025-09-06/20250906T214907_in_gate.jpg",
-    "data/images/2025-09-06/20250906T215749_in_gate.jpg",
-    "data/images/2025-09-06/20250906T200839_in_gate.jpg",
-    "data/images/2025-09-06/20250906T201906_in_gate.jpg"
+    "/Users/rayli/Documents/container-analytics/data/images/2025-09-06/20250906T002027_in_gate.jpg"
   ],
   "method": "direct_url_construction"
 }

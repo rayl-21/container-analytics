@@ -34,13 +34,13 @@ class TestYOLODetector:
             
             detector = YOLODetector()
             
-            assert detector.model_path == "yolov8x.pt"
+            assert detector.model_path == "data/models/yolov12n.pt"
             assert detector.confidence_threshold == 0.5
             assert detector.iou_threshold == 0.7
             assert detector.device == "cpu"  # Should use CPU when CUDA not available
             assert detector.verbose == True
             
-            mock_yolo.assert_called_once_with("yolov8x.pt")
+            mock_yolo.assert_called_once_with("data/models/yolov12n.pt")
             mock_model.to.assert_called_once_with("cpu")
     
     def test_init_custom_params(self):

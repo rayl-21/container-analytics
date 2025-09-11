@@ -47,7 +47,7 @@ class YOLODetector:
     
     def __init__(
         self,
-        model_path: str = "yolov8x.pt",
+        model_path: str = "yolov12n.pt",
         confidence_threshold: float = 0.5,
         iou_threshold: float = 0.7,
         device: Optional[str] = None,
@@ -57,7 +57,7 @@ class YOLODetector:
         Initialize the YOLO detector.
         
         Args:
-            model_path: Path to YOLO model weights (default: pre-trained yolov8x.pt)
+            model_path: Path to YOLO model weights (default: yolov12n.pt turbo model)
             confidence_threshold: Minimum confidence score for detections
             iou_threshold: IoU threshold for Non-Maximum Suppression
             device: Device to run inference on ('cpu', 'cuda', or None for auto)
@@ -85,7 +85,7 @@ class YOLODetector:
         else:
             self.device = device
             
-        logger.info(f"Initializing YOLO detector on device: {self.device}")
+        logger.info(f"Initializing YOLOv12 detector on device: {self.device}")
         
         # Load model
         self._load_model()
@@ -94,7 +94,7 @@ class YOLODetector:
         self.detection_times = []
         
     def _load_model(self) -> None:
-        """Load the YOLO model and configure it."""
+        """Load the YOLOv12 model and configure it."""
         try:
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
@@ -103,10 +103,10 @@ class YOLODetector:
             self.model.conf = self.confidence_threshold
             self.model.iou = self.iou_threshold
             
-            logger.info(f"Successfully loaded YOLO model: {self.model_path}")
+            logger.info(f"Successfully loaded YOLOv12 model: {self.model_path}")
             
         except Exception as e:
-            logger.error(f"Failed to load YOLO model: {e}")
+            logger.error(f"Failed to load YOLOv12 model: {e}")
             raise
     
     def detect_single_image(

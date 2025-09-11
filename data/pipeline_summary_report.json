@@ -1,19 +1,19 @@
 {
   "pipeline_run": {
     "date": "2025-09-06",
-    "timestamp": "2025-09-07T22:50:53.900891",
-    "test_environment": "data"
+    "timestamp": "2025-09-11T11:08:10.526078",
+    "test_environment": "/Users/rayli/Documents/container-analytics/data"
   },
   "stages": {
     "download": {
-      "total_images": 20,
+      "total_images": 1,
       "stream": "in_gate",
       "mock_data": false
     },
     "detection": {
-      "images_processed": 5,
-      "total_detections": 1187,
-      "avg_detections_per_image": 237.4
+      "images_processed": 1,
+      "total_detections": 513,
+      "avg_detections_per_image": 513.0
     },
     "analytics": {
       "metrics_calculated": [
@@ -26,7 +26,7 @@
       "hourly_data_points": 7
     },
     "database": {
-      "images": 5,
+      "images": 6,
       "detections": 0,
       "containers": 20,
       "metrics": 0
@@ -36,8 +36,8 @@
     "pipeline_status": "SUCCESS",
     "total_stages_completed": 5,
     "key_metrics": {
-      "images_processed": 20,
-      "objects_detected": 1187,
+      "images_processed": 1,
+      "objects_detected": 513,
       "containers_tracked": 20,
       "anomalies_found": 4
     }
