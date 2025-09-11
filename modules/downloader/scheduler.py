@@ -19,27 +19,79 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from loguru import logger
 
 from .selenium_client import DrayDogDownloader
+from modules.database.models import (
+    Image,
+    get_session,
+    session_scope,
+    get_database_stats,
+)
+from modules.database.queries import get_image_stats, get_recent_images
 
 
 @dataclass
 class DownloadConfig:
-    """Configuration for scheduled downloads."""
+    """Enhanced configuration for image download scheduler."""
 
     stream_names: List[str] = None
     download_dir: str = "data/images"
-    interval_minutes: int = 10
-    headless: bool = True
+
+    # Scheduling configuration
+    download_interval_minutes: int = 10  # Match camera capture rate
+    cleanup_interval_hours: int = 24
+    retention_days: int = 30
+
+    # Retry configuration
     max_retries: int = 3
+    retry_delay_seconds: int = 60
+    exponential_backoff: bool = True
+    backoff_multiplier: float = 2.0
+    max_retry_delay_seconds: int = 600  # 10 minutes max
+
+    # Performance configuration
+    batch_size: int = 50
+    concurrent_downloads: int = 3
+
+    # Monitoring
+    enable_health_check: bool = True
+    health_check_port: int = 8080
+    alert_email: Optional[str] = None
+
+    # Browser configuration
+    headless: bool = True
+    timeout: int = 30
+
+    # Legacy compatibility
+    interval_minutes: int = 10  # Keep for backward compatibility
     enable_cleanup: bool = True
     cleanup_days: int = 7
 
     def __post_init__(self):
         if self.stream_names is None:
-            self.stream_names = ["in_gate"]
+            self.stream_names = ["in_gate", "out_gate"]
+        # Sync legacy fields with new fields for backward compatibility
+        if hasattr(self, "interval_minutes") and self.interval_minutes != 10:
+            self.download_interval_minutes = self.interval_minutes
+        if hasattr(self, "cleanup_days") and self.cleanup_days != 7:
+            self.retention_days = self.cleanup_days
+
+    def validate(self):
+        """Validate configuration values."""
+        if self.download_interval_minutes < 5:
+            raise ValueError("Download interval must be at least 5 minutes")
+        if self.retention_days < 1:
+            raise ValueError("Retention days must be at least 1")
+        if self.batch_size < 1 or self.batch_size > 1000:
+            raise ValueError("Batch size must be between 1 and 1000")
+        if self.max_retries < 1:
+            raise ValueError("Max retries must be at least 1")
+        if self.retry_delay_seconds < 1:
+            raise ValueError("Retry delay must be at least 1 second")
+        if self.backoff_multiplier <= 1.0:
+            raise ValueError("Backoff multiplier must be greater than 1.0")
 
 
 @dataclass
@@ -49,6 +101,7 @@ class DownloadStats:
     total_runs: int = 0
     successful_runs: int = 0
     failed_runs: int = 0
+    failed_downloads: int = 0  # Track individual download failures
     total_images: int = 0
     last_run_time: Optional[datetime] = None
     last_success_time: Optional[datetime] = None
@@ -79,9 +132,13 @@ class ImageDownloadScheduler:
         self.stats = DownloadStats()
         self.is_running = False
         self._shutdown_event = threading.Event()
+        self.database_available = False
 
         # Setup logging
         self._setup_logging()
+
+        # Validate database connection
+        self._validate_database_connection()
 
         # Load existing stats if available
         self._load_stats()
@@ -90,6 +147,23 @@ class ImageDownloadScheduler:
         self._setup_signal_handlers()
 
         logger.info("ImageDownloadScheduler initialized")
+
+    def _validate_database_connection(self):
+        """Validate database connection and set availability flag."""
+        try:
+            with session_scope() as session:
+                # Test basic database connectivity
+                result = session.execute("SELECT 1").fetchone()
+                if result:
+                    self.database_available = True
+                    logger.info("Database connection validated successfully")
+                else:
+                    logger.warning("Database connection test failed")
+        except Exception as e:
+            logger.warning(
+                f"Database not available: {e}. Scheduler will continue with file-based stats."
+            )
+            self.database_available = False
 
     def _setup_logging(self):
         """Configure logging for the scheduler."""
@@ -121,7 +195,53 @@ class ImageDownloadScheduler:
         atexit.register(self.cleanup)
 
     def _load_stats(self):
-        """Load existing statistics from file."""
+        """Load existing statistics from database or fallback to JSON file."""
+        if self.database_available:
+            try:
+                # Try to load stats from database
+                db_stats = get_image_stats()
+
+                # Convert database stats to DownloadStats format
+                self.stats.total_images = db_stats.get("total_images", 0)
+
+                # For scheduler-specific stats, we'll still use the JSON file
+                # since database doesn't track runs/failures yet
+                stats_file = os.path.join(
+                    self.config.download_dir, "scheduler_stats.json"
+                )
+                if os.path.exists(stats_file):
+                    with open(stats_file, "r") as f:
+                        stats_data = json.load(f)
+
+                    # Convert datetime strings back to datetime objects
+                    if stats_data.get("last_run_time"):
+                        stats_data["last_run_time"] = datetime.fromisoformat(
+                            stats_data["last_run_time"]
+                        )
+                    if stats_data.get("last_success_time"):
+                        stats_data["last_success_time"] = datetime.fromisoformat(
+                            stats_data["last_success_time"]
+                        )
+
+                    # Load scheduler-specific stats but preserve database image count
+                    total_images = self.stats.total_images
+                    self.stats = DownloadStats(**stats_data)
+                    self.stats.total_images = total_images
+
+                logger.info(
+                    "Loaded existing scheduler statistics from database and JSON file"
+                )
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load database stats, falling back to JSON: {e}"
+                )
+                self._load_stats_from_json()
+        else:
+            self._load_stats_from_json()
+
+    def _load_stats_from_json(self):
+        """Fallback method to load stats from JSON file."""
         stats_file = os.path.join(self.config.download_dir, "scheduler_stats.json")
 
         try:
@@ -140,10 +260,10 @@ class ImageDownloadScheduler:
                     )
 
                 self.stats = DownloadStats(**stats_data)
-                logger.info("Loaded existing scheduler statistics")
+                logger.info("Loaded existing scheduler statistics from JSON file")
 
         except Exception as e:
-            logger.warning(f"Failed to load scheduler stats: {e}")
+            logger.warning(f"Failed to load scheduler stats from JSON: {e}")
 
     def _save_stats(self):
         """Save current statistics to file."""
@@ -166,6 +286,60 @@ class ImageDownloadScheduler:
 
         except Exception as e:
             logger.error(f"Failed to save scheduler stats: {e}")
+
+    def _download_with_retry(self, download_func, *args, **kwargs):
+        """
+        Execute download function with retry logic and exponential backoff.
+
+        Args:
+            download_func: Function to execute
+            *args, **kwargs: Arguments for the function
+
+        Returns:
+            Result of the download function
+        """
+        last_exception = None
+        retry_delay = self.config.retry_delay_seconds
+
+        for attempt in range(self.config.max_retries):
+            try:
+                logger.info(f"Download attempt {attempt + 1}/{self.config.max_retries}")
+                result = download_func(*args, **kwargs)
+
+                if attempt > 0:
+                    logger.info(f"Download succeeded after {attempt + 1} attempts")
+
+                return result
+
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Download attempt {attempt + 1} failed: {e}")
+
+                if attempt < self.config.max_retries - 1:
+                    # Calculate next retry delay
+                    if self.config.exponential_backoff:
+                        retry_delay = min(
+                            retry_delay * self.config.backoff_multiplier,
+                            self.config.max_retry_delay_seconds,
+                        )
+
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+
+                    # Check for shutdown during wait
+                    if self._shutdown_event.wait(retry_delay):
+                        logger.info("Shutdown requested during retry wait")
+                        break
+
+                # Reset delay for next retry cycle
+                if retry_delay >= self.config.max_retry_delay_seconds:
+                    retry_delay = self.config.retry_delay_seconds
+
+        # All retries failed
+        logger.error(f"All {self.config.max_retries} download attempts failed")
+        self.stats.failed_downloads += 1
+
+        if last_exception:
+            raise last_exception
 
     def _download_images_job(self):
         """
@@ -205,6 +379,10 @@ class ImageDownloadScheduler:
                             f"Downloaded {downloaded_count} images for stream {stream_name}"
                         )
 
+                        # Save downloaded images to database
+                        if downloaded_files:
+                            self.save_to_database(downloaded_files, stream_name)
+
                 except Exception as e:
                     error_msg = (
                         f"Failed to download images for stream {stream_name}: {str(e)}"
@@ -243,6 +421,97 @@ class ImageDownloadScheduler:
 
         finally:
             self._save_stats()
+
+    def save_to_database(self, downloaded_files: List[str], stream_name: str):
+        """
+        Save downloaded image files to database.
+
+        Args:
+            downloaded_files: List of file paths that were successfully downloaded
+            stream_name: Camera stream name (used as camera_id)
+        """
+        if not self.database_available:
+            logger.debug("Database not available, skipping database save")
+            return
+
+        saved_count = 0
+        errors = []
+
+        try:
+            for file_path in downloaded_files:
+                try:
+                    # Extract timestamp from filename if possible
+                    filename = os.path.basename(file_path)
+
+                    # Parse timestamp from filename (format: YYYY-MM-DDTHH-MM-SS-stream_name.jpg)
+                    timestamp = None
+                    try:
+                        if "T" in filename and "-" in filename:
+                            # Extract just the timestamp part: 2025-01-15T14-35-12
+                            parts = filename.split("-")
+                            if len(parts) >= 4:  # YYYY-MM-DDTHH-MM-SS
+                                date_part = (
+                                    parts[0] + "-" + parts[1] + "-" + parts[2]
+                                )  # 2025-01-15THH
+                                time_hour = (
+                                    date_part.split("T")[1]
+                                    if "T" in date_part
+                                    else parts[3]
+                                )  # HH
+                                time_min = (
+                                    parts[3] if "T" in date_part else parts[4]
+                                )  # MM
+                                time_sec = (
+                                    parts[4] if "T" in date_part else parts[5]
+                                )  # SS
+
+                                # Reconstruct as proper ISO format: 2025-01-15T14:35:12
+                                iso_timestamp = f"{date_part.split('T')[0]}T{time_hour}:{time_min}:{time_sec}"
+                                timestamp = datetime.fromisoformat(iso_timestamp)
+                    except:
+                        # Use file creation time if timestamp parsing fails
+                        timestamp = datetime.fromtimestamp(os.path.getctime(file_path))
+
+                    # Get file size
+                    file_size = (
+                        os.path.getsize(file_path)
+                        if os.path.exists(file_path)
+                        else None
+                    )
+
+                    # Insert into database
+                    with session_scope() as session:
+                        # Check if image already exists
+                        existing = (
+                            session.query(Image)
+                            .filter(Image.filepath == file_path)
+                            .first()
+                        )
+                        if not existing:
+                            image = Image(
+                                filepath=file_path,
+                                camera_id=stream_name,
+                                timestamp=timestamp or datetime.utcnow(),
+                                file_size=file_size,
+                                processed=False,
+                            )
+                            session.add(image)
+                            saved_count += 1
+                            logger.debug(f"Saved image to database: {filename}")
+
+                except Exception as e:
+                    error_msg = f"Failed to save {file_path} to database: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            if saved_count > 0:
+                logger.info(f"Successfully saved {saved_count} images to database")
+
+            if errors:
+                logger.warning(f"Database save completed with {len(errors)} errors")
+
+        except Exception as e:
+            logger.error(f"Database save operation failed: {e}")
 
     def _cleanup_old_images(self):
         """Remove images older than configured retention period."""
@@ -291,67 +560,89 @@ class ImageDownloadScheduler:
             logger.debug(f"Job {event.job_id} executed successfully")
 
     def start(self, blocking: bool = True):
-        """
-        Start the scheduled downloads.
-
-        Args:
-            blocking: If True, run scheduler in blocking mode (main thread)
-                     If False, run in background thread
-        """
+        """Start the scheduler with configured jobs."""
         if self.is_running:
             logger.warning("Scheduler is already running")
             return
 
         try:
+            # Validate configuration
+            self.config.validate()
+
             # Choose scheduler type based on blocking preference
             if blocking:
                 self.scheduler = BlockingScheduler()
             else:
                 self.scheduler = BackgroundScheduler()
 
-            # Add job event listener
-            self.scheduler.add_listener(
-                self._job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
-            )
-
-            # Schedule the download job with interval trigger
+            # Add download job with interval trigger
             self.scheduler.add_job(
-                func=self._download_images_job,
-                trigger=IntervalTrigger(minutes=self.config.interval_minutes),
+                func=self._download_images_job_with_retry,
+                trigger="interval",
+                minutes=self.config.download_interval_minutes,
                 id="download_images",
-                name="Download Dray Dog Images",
-                max_instances=1,  # Prevent overlapping runs
-                coalesce=True,  # Combine missed executions
-                misfire_grace_time=300,  # 5 minute grace period for missed jobs
+                name="Download Camera Images",
+                misfire_grace_time=60,  # Allow 1 minute grace period
+                coalesce=True,  # Coalesce missed jobs
+                max_instances=1,  # Only one instance at a time
+                next_run_time=datetime.now(),  # Run immediately on start
             )
 
-            # Add daily cleanup job at 3 AM
-            if self.config.enable_cleanup:
+            # Add cleanup job
+            self.scheduler.add_job(
+                func=self._cleanup_old_images,
+                trigger="interval",
+                hours=self.config.cleanup_interval_hours,
+                id="cleanup_images",
+                name="Cleanup Old Images",
+                misfire_grace_time=3600,  # 1 hour grace period
+                coalesce=True,
+                max_instances=1,
+            )
+
+            # Add health check job if enabled
+            if self.config.enable_health_check:
                 self.scheduler.add_job(
-                    func=self._cleanup_old_images,
-                    trigger=CronTrigger(hour=3, minute=0),
-                    id="cleanup_images",
-                    name="Cleanup Old Images",
+                    func=self._health_check,
+                    trigger="interval",
+                    minutes=5,
+                    id="health_check",
+                    name="Health Check",
+                    misfire_grace_time=30,
+                    coalesce=True,
                     max_instances=1,
                 )
+
+            # Add listener for job events
+            self.scheduler.add_listener(
+                self._job_listener,
+                EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
+            )
 
             # Start scheduler
             self.scheduler.start()
             self.is_running = True
 
+            logger.info(f"Scheduler started with {len(self.scheduler.get_jobs())} jobs")
             logger.info(
-                f"Scheduler started - downloading every {self.config.interval_minutes} minutes"
+                f"Download interval: {self.config.download_interval_minutes} minutes"
             )
-            logger.info(f"Configured streams: {', '.join(self.config.stream_names)}")
+            logger.info(f"Monitoring streams: {', '.join(self.config.stream_names)}")
 
-            # Run initial download job if requested
-            logger.info("Running initial download job...")
-            self._download_images_job()
+            # Print job schedule
+            self._print_schedule()
 
         except Exception as e:
             logger.error(f"Failed to start scheduler: {e}")
-            self.cleanup()
             raise
+
+    def _download_images_job_with_retry(self):
+        """Wrapper for download job with retry logic."""
+        try:
+            self._download_with_retry(self._download_images_job)
+        except Exception as e:
+            logger.error(f"Download job failed after all retries: {e}")
+            self._send_alert(f"Download job failed: {e}")
 
     def stop(self):
         """Stop the scheduler gracefully."""
@@ -372,7 +663,7 @@ class ImageDownloadScheduler:
 
     def get_stats(self) -> Dict:
         """
-        Get current download statistics.
+        Get current download statistics with database integration.
 
         Returns:
             Dictionary containing download statistics
@@ -393,6 +684,40 @@ class ImageDownloadScheduler:
             else 0
         )
         stats_dict["average_images_per_run"] = f"{avg_images:.1f}"
+
+        # Add database-specific information if available
+        if self.database_available:
+            try:
+                db_stats = get_image_stats()
+                stats_dict.update(
+                    {
+                        "database_total_images": db_stats.get("total_images", 0),
+                        "database_processed_images": db_stats.get(
+                            "processed_images", 0
+                        ),
+                        "database_unprocessed_images": db_stats.get(
+                            "unprocessed_images", 0
+                        ),
+                        "database_processing_rate": db_stats.get("processing_rate", 0),
+                        "database_available": True,
+                    }
+                )
+
+                # Update total_images from database if higher (more accurate)
+                db_total = db_stats.get("total_images", 0)
+                if db_total > stats_dict.get("total_images", 0):
+                    stats_dict["total_images"] = db_total
+                    # Recalculate average with updated total
+                    if self.stats.successful_runs > 0:
+                        stats_dict["average_images_per_run"] = (
+                            f"{db_total / self.stats.successful_runs:.1f}"
+                        )
+
+            except Exception as e:
+                logger.warning(f"Failed to get database stats: {e}")
+                stats_dict["database_available"] = False
+        else:
+            stats_dict["database_available"] = False
 
         return stats_dict
 
@@ -417,6 +742,22 @@ class ImageDownloadScheduler:
         if stats["last_error"]:
             print(f"Last Error:           {stats['last_error']}")
 
+        # Database statistics if available
+        if stats.get("database_available"):
+            print("\nDATABASE STATISTICS:")
+            print(f"DB Total Images:      {stats.get('database_total_images', 'N/A')}")
+            print(
+                f"DB Processed Images:  {stats.get('database_processed_images', 'N/A')}"
+            )
+            print(
+                f"DB Unprocessed Images:{stats.get('database_unprocessed_images', 'N/A')}"
+            )
+            print(
+                f"DB Processing Rate:   {stats.get('database_processing_rate', 'N/A')}%"
+            )
+        else:
+            print("\nDatabase: Not Available (using file-based stats)")
+
         print("=" * 50)
 
     def cleanup(self):
@@ -428,6 +769,90 @@ class ImageDownloadScheduler:
         self._save_stats()
 
         logger.info("Scheduler cleanup completed")
+
+    def _health_check(self):
+        """Perform health check and report status."""
+        try:
+            health_status = {
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "is_running": self.is_running,
+                "jobs": [],
+            }
+
+            # Check each job
+            for job in self.scheduler.get_jobs():
+                job_info = {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": (
+                        job.next_run_time.isoformat() if job.next_run_time else None
+                    ),
+                    "pending": job.pending,
+                }
+                health_status["jobs"].append(job_info)
+
+            # Check database connection
+            try:
+                with session_scope() as session:
+                    session.execute("SELECT 1")
+                health_status["database"] = "connected"
+            except:
+                health_status["database"] = "disconnected"
+                health_status["status"] = "degraded"
+
+            # Check disk space
+            disk_usage = self._check_disk_space()
+            health_status["disk_usage_percent"] = disk_usage
+
+            if disk_usage > 90:
+                health_status["status"] = "critical"
+                self._send_alert(f"Disk usage critical: {disk_usage}%")
+            elif disk_usage > 80:
+                health_status["status"] = "warning"
+
+            # Write health status to file for external monitoring
+            health_file = os.path.join(self.config.download_dir, ".health")
+            with open(health_file, "w") as f:
+                json.dump(health_status, f, indent=2)
+
+            logger.debug(f"Health check: {health_status['status']}")
+
+            return health_status
+
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _check_disk_space(self) -> float:
+        """Check disk space usage percentage."""
+        import shutil
+
+        usage = shutil.disk_usage(self.config.download_dir)
+        percent_used = (usage.used / usage.total) * 100
+        return round(percent_used, 2)
+
+    def _send_alert(self, message: str):
+        """Send alert notification."""
+        if self.config.alert_email:
+            # Implement email alerting here
+            logger.warning(f"ALERT: {message}")
+            # For now, just log
+        else:
+            logger.warning(f"ALERT (no email configured): {message}")
+
+    def _print_schedule(self):
+        """Print the current job schedule."""
+        print("\n" + "=" * 60)
+        print("SCHEDULED JOBS")
+        print("=" * 60)
+
+        for job in self.scheduler.get_jobs():
+            print(f"\nJob: {job.name} (ID: {job.id})")
+            print(f"  Next run: {job.next_run_time}")
+            print(f"  Trigger: {job.trigger}")
+
+        print("=" * 60 + "\n")
 
 
 # CLI interface and main execution
