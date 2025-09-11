@@ -19,7 +19,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from loguru import logger
 
 from .selenium_client import DrayDogDownloader
@@ -34,19 +34,64 @@ from modules.database.queries import get_image_stats, get_recent_images
 
 @dataclass
 class DownloadConfig:
-    """Configuration for scheduled downloads."""
+    """Enhanced configuration for image download scheduler."""
 
     stream_names: List[str] = None
     download_dir: str = "data/images"
-    interval_minutes: int = 10
-    headless: bool = True
+
+    # Scheduling configuration
+    download_interval_minutes: int = 10  # Match camera capture rate
+    cleanup_interval_hours: int = 24
+    retention_days: int = 30
+
+    # Retry configuration
     max_retries: int = 3
+    retry_delay_seconds: int = 60
+    exponential_backoff: bool = True
+    backoff_multiplier: float = 2.0
+    max_retry_delay_seconds: int = 600  # 10 minutes max
+
+    # Performance configuration
+    batch_size: int = 50
+    concurrent_downloads: int = 3
+
+    # Monitoring
+    enable_health_check: bool = True
+    health_check_port: int = 8080
+    alert_email: Optional[str] = None
+
+    # Browser configuration
+    headless: bool = True
+    timeout: int = 30
+
+    # Legacy compatibility
+    interval_minutes: int = 10  # Keep for backward compatibility
     enable_cleanup: bool = True
     cleanup_days: int = 7
 
     def __post_init__(self):
         if self.stream_names is None:
-            self.stream_names = ["in_gate"]
+            self.stream_names = ["in_gate", "out_gate"]
+        # Sync legacy fields with new fields for backward compatibility
+        if hasattr(self, "interval_minutes") and self.interval_minutes != 10:
+            self.download_interval_minutes = self.interval_minutes
+        if hasattr(self, "cleanup_days") and self.cleanup_days != 7:
+            self.retention_days = self.cleanup_days
+
+    def validate(self):
+        """Validate configuration values."""
+        if self.download_interval_minutes < 5:
+            raise ValueError("Download interval must be at least 5 minutes")
+        if self.retention_days < 1:
+            raise ValueError("Retention days must be at least 1")
+        if self.batch_size < 1 or self.batch_size > 1000:
+            raise ValueError("Batch size must be between 1 and 1000")
+        if self.max_retries < 1:
+            raise ValueError("Max retries must be at least 1")
+        if self.retry_delay_seconds < 1:
+            raise ValueError("Retry delay must be at least 1 second")
+        if self.backoff_multiplier <= 1.0:
+            raise ValueError("Backoff multiplier must be greater than 1.0")
 
 
 @dataclass
@@ -56,6 +101,7 @@ class DownloadStats:
     total_runs: int = 0
     successful_runs: int = 0
     failed_runs: int = 0
+    failed_downloads: int = 0  # Track individual download failures
     total_images: int = 0
     last_run_time: Optional[datetime] = None
     last_success_time: Optional[datetime] = None
@@ -240,6 +286,60 @@ class ImageDownloadScheduler:
 
         except Exception as e:
             logger.error(f"Failed to save scheduler stats: {e}")
+
+    def _download_with_retry(self, download_func, *args, **kwargs):
+        """
+        Execute download function with retry logic and exponential backoff.
+
+        Args:
+            download_func: Function to execute
+            *args, **kwargs: Arguments for the function
+
+        Returns:
+            Result of the download function
+        """
+        last_exception = None
+        retry_delay = self.config.retry_delay_seconds
+
+        for attempt in range(self.config.max_retries):
+            try:
+                logger.info(f"Download attempt {attempt + 1}/{self.config.max_retries}")
+                result = download_func(*args, **kwargs)
+
+                if attempt > 0:
+                    logger.info(f"Download succeeded after {attempt + 1} attempts")
+
+                return result
+
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Download attempt {attempt + 1} failed: {e}")
+
+                if attempt < self.config.max_retries - 1:
+                    # Calculate next retry delay
+                    if self.config.exponential_backoff:
+                        retry_delay = min(
+                            retry_delay * self.config.backoff_multiplier,
+                            self.config.max_retry_delay_seconds,
+                        )
+
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+
+                    # Check for shutdown during wait
+                    if self._shutdown_event.wait(retry_delay):
+                        logger.info("Shutdown requested during retry wait")
+                        break
+
+                # Reset delay for next retry cycle
+                if retry_delay >= self.config.max_retry_delay_seconds:
+                    retry_delay = self.config.retry_delay_seconds
+
+        # All retries failed
+        logger.error(f"All {self.config.max_retries} download attempts failed")
+        self.stats.failed_downloads += 1
+
+        if last_exception:
+            raise last_exception
 
     def _download_images_job(self):
         """
@@ -460,67 +560,89 @@ class ImageDownloadScheduler:
             logger.debug(f"Job {event.job_id} executed successfully")
 
     def start(self, blocking: bool = True):
-        """
-        Start the scheduled downloads.
-
-        Args:
-            blocking: If True, run scheduler in blocking mode (main thread)
-                     If False, run in background thread
-        """
+        """Start the scheduler with configured jobs."""
         if self.is_running:
             logger.warning("Scheduler is already running")
             return
 
         try:
+            # Validate configuration
+            self.config.validate()
+
             # Choose scheduler type based on blocking preference
             if blocking:
                 self.scheduler = BlockingScheduler()
             else:
                 self.scheduler = BackgroundScheduler()
 
-            # Add job event listener
-            self.scheduler.add_listener(
-                self._job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
-            )
-
-            # Schedule the download job with interval trigger
+            # Add download job with interval trigger
             self.scheduler.add_job(
-                func=self._download_images_job,
-                trigger=IntervalTrigger(minutes=self.config.interval_minutes),
+                func=self._download_images_job_with_retry,
+                trigger="interval",
+                minutes=self.config.download_interval_minutes,
                 id="download_images",
-                name="Download Dray Dog Images",
-                max_instances=1,  # Prevent overlapping runs
-                coalesce=True,  # Combine missed executions
-                misfire_grace_time=300,  # 5 minute grace period for missed jobs
+                name="Download Camera Images",
+                misfire_grace_time=60,  # Allow 1 minute grace period
+                coalesce=True,  # Coalesce missed jobs
+                max_instances=1,  # Only one instance at a time
+                next_run_time=datetime.now(),  # Run immediately on start
             )
 
-            # Add daily cleanup job at 3 AM
-            if self.config.enable_cleanup:
+            # Add cleanup job
+            self.scheduler.add_job(
+                func=self._cleanup_old_images,
+                trigger="interval",
+                hours=self.config.cleanup_interval_hours,
+                id="cleanup_images",
+                name="Cleanup Old Images",
+                misfire_grace_time=3600,  # 1 hour grace period
+                coalesce=True,
+                max_instances=1,
+            )
+
+            # Add health check job if enabled
+            if self.config.enable_health_check:
                 self.scheduler.add_job(
-                    func=self._cleanup_old_images,
-                    trigger=CronTrigger(hour=3, minute=0),
-                    id="cleanup_images",
-                    name="Cleanup Old Images",
+                    func=self._health_check,
+                    trigger="interval",
+                    minutes=5,
+                    id="health_check",
+                    name="Health Check",
+                    misfire_grace_time=30,
+                    coalesce=True,
                     max_instances=1,
                 )
+
+            # Add listener for job events
+            self.scheduler.add_listener(
+                self._job_listener,
+                EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
+            )
 
             # Start scheduler
             self.scheduler.start()
             self.is_running = True
 
+            logger.info(f"Scheduler started with {len(self.scheduler.get_jobs())} jobs")
             logger.info(
-                f"Scheduler started - downloading every {self.config.interval_minutes} minutes"
+                f"Download interval: {self.config.download_interval_minutes} minutes"
             )
-            logger.info(f"Configured streams: {', '.join(self.config.stream_names)}")
+            logger.info(f"Monitoring streams: {', '.join(self.config.stream_names)}")
 
-            # Run initial download job if requested
-            logger.info("Running initial download job...")
-            self._download_images_job()
+            # Print job schedule
+            self._print_schedule()
 
         except Exception as e:
             logger.error(f"Failed to start scheduler: {e}")
-            self.cleanup()
             raise
+
+    def _download_images_job_with_retry(self):
+        """Wrapper for download job with retry logic."""
+        try:
+            self._download_with_retry(self._download_images_job)
+        except Exception as e:
+            logger.error(f"Download job failed after all retries: {e}")
+            self._send_alert(f"Download job failed: {e}")
 
     def stop(self):
         """Stop the scheduler gracefully."""
@@ -647,6 +769,90 @@ class ImageDownloadScheduler:
         self._save_stats()
 
         logger.info("Scheduler cleanup completed")
+
+    def _health_check(self):
+        """Perform health check and report status."""
+        try:
+            health_status = {
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "is_running": self.is_running,
+                "jobs": [],
+            }
+
+            # Check each job
+            for job in self.scheduler.get_jobs():
+                job_info = {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": (
+                        job.next_run_time.isoformat() if job.next_run_time else None
+                    ),
+                    "pending": job.pending,
+                }
+                health_status["jobs"].append(job_info)
+
+            # Check database connection
+            try:
+                with session_scope() as session:
+                    session.execute("SELECT 1")
+                health_status["database"] = "connected"
+            except:
+                health_status["database"] = "disconnected"
+                health_status["status"] = "degraded"
+
+            # Check disk space
+            disk_usage = self._check_disk_space()
+            health_status["disk_usage_percent"] = disk_usage
+
+            if disk_usage > 90:
+                health_status["status"] = "critical"
+                self._send_alert(f"Disk usage critical: {disk_usage}%")
+            elif disk_usage > 80:
+                health_status["status"] = "warning"
+
+            # Write health status to file for external monitoring
+            health_file = os.path.join(self.config.download_dir, ".health")
+            with open(health_file, "w") as f:
+                json.dump(health_status, f, indent=2)
+
+            logger.debug(f"Health check: {health_status['status']}")
+
+            return health_status
+
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _check_disk_space(self) -> float:
+        """Check disk space usage percentage."""
+        import shutil
+
+        usage = shutil.disk_usage(self.config.download_dir)
+        percent_used = (usage.used / usage.total) * 100
+        return round(percent_used, 2)
+
+    def _send_alert(self, message: str):
+        """Send alert notification."""
+        if self.config.alert_email:
+            # Implement email alerting here
+            logger.warning(f"ALERT: {message}")
+            # For now, just log
+        else:
+            logger.warning(f"ALERT (no email configured): {message}")
+
+    def _print_schedule(self):
+        """Print the current job schedule."""
+        print("\n" + "=" * 60)
+        print("SCHEDULED JOBS")
+        print("=" * 60)
+
+        for job in self.scheduler.get_jobs():
+            print(f"\nJob: {job.name} (ID: {job.id})")
+            print(f"  Next run: {job.next_run_time}")
+            print(f"  Trigger: {job.trigger}")
+
+        print("=" * 60 + "\n")
 
 
 # CLI interface and main execution

@@ -1,0 +1,27 @@
+[Unit]
+Description=Container Analytics Image Download Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=container-analytics
+Group=container-analytics
+WorkingDirectory=/opt/container-analytics
+Environment="PATH=/opt/container-analytics/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/container-analytics/venv/bin/python -m modules.downloader.scheduler --config /etc/container-analytics/scheduler.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=2G
+CPUQuota=50%
+
+# Security
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
