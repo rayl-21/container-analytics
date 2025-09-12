@@ -87,7 +87,8 @@ FROM python:3.10-slim-bullseye as production
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    DOCKER_CONTAINER=true
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \

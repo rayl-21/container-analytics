@@ -36,7 +36,8 @@ def insert_image(filepath: str, camera_id: str, timestamp: Optional[datetime] = 
     
     with session_scope() as session:
         image = Image(
-            filepath=filepath,
+            image_path=filepath,  # Set the required image_path field
+            filepath=filepath,    # Also set filepath for backward compatibility
             camera_id=camera_id,
             timestamp=timestamp,
             file_size=file_size,

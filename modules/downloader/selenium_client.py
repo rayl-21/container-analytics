@@ -84,30 +84,126 @@ class DrayDogDownloader:
         try:
             options = Options()
 
-            if self.headless:
-                options.add_argument("--headless")
-
-            # Stealth options to avoid detection
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--disable-extensions")
+            # Essential Chrome options for Docker container
+            options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
+            options.add_argument("--disable-web-security")
+            options.add_argument("--disable-features=VizDisplayCompositor")
+            
+            # Critical for Docker: disable single process mode (it causes crashes)
+            # options.add_argument("--single-process")  # REMOVED - causes crashes
+            
+            # Additional stability options for containerized environments
+            options.add_argument("--disable-setuid-sandbox")
+            options.add_argument("--disable-dev-tools")
+            options.add_argument("--no-zygote")
+            options.add_argument("--use-gl=swiftshader")
+            options.add_argument("--disable-software-rasterizer")
+            
+            # Set window size for consistent rendering
             options.add_argument("--window-size=1920,1080")
+            
+            # Disable automation detection
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+            
+            # Performance optimizations
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-logging")
+            options.add_argument("--disable-infobars")
+            options.add_argument("--disable-notifications")
+            options.add_argument("--disable-default-apps")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-breakpad")
+            options.add_argument("--disable-component-extensions-with-background-pages")
+            options.add_argument("--disable-features=TranslateUI")
+            options.add_argument("--disable-ipc-flooding-protection")
+            options.add_argument("--disable-renderer-backgrounding")
+            options.add_argument("--force-color-profile=srgb")
+            options.add_argument("--metrics-recording-only")
+            options.add_argument("--mute-audio")
+            
+            # User agent to avoid detection
             options.add_argument(
-                "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-
+            
+            # Memory and resource management
+            options.add_argument("--memory-pressure-off")
+            options.add_argument("--max_old_space_size=4096")
+            
             # Disable images for faster loading (we'll download them separately)
             prefs = {
                 "profile.managed_default_content_settings.images": 2,
                 "profile.default_content_settings.popups": 0,
+                "download.default_directory": self.download_dir,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": False
             }
             options.add_experimental_option("prefs", prefs)
+            
+            # Check if running in Docker container
+            import os
+            is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER", False)
+            
+            if is_docker:
+                logger.info("Running in Docker container, using system Chrome")
+                # Use system Chrome/Chromium in Docker
+                chrome_paths = [
+                    "/usr/bin/google-chrome-stable",
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/chromium-browser",
+                    "/usr/bin/chromium"
+                ]
+                
+                chrome_binary = None
+                for path in chrome_paths:
+                    if os.path.exists(path):
+                        chrome_binary = path
+                        logger.info(f"Found Chrome at: {path}")
+                        break
+                
+                if chrome_binary:
+                    options.binary_location = chrome_binary
+                
+                # Try to find chromedriver
+                chromedriver_paths = [
+                    "/usr/local/bin/chromedriver",
+                    "/usr/bin/chromedriver",
+                    "/usr/lib/chromium/chromedriver",
+                ]
+                chromedriver_path = None
+                for path in chromedriver_paths:
+                    if os.path.exists(path):
+                        chromedriver_path = path
+                        logger.info(f"Found ChromeDriver at: {path}")
+                        break
+                
+                if chromedriver_path:
+                    from selenium.webdriver.chrome.service import Service
+                    service = Service(chromedriver_path)
+                    driver = webdriver.Chrome(service=service, options=options)
+                else:
+                    # Fallback to webdriver without explicit path
+                    logger.warning("ChromeDriver not found, trying default")
+                    driver = webdriver.Chrome(options=options)
+            else:
+                # Use webdriver-manager for non-Docker environments
+                logger.info("Running in non-Docker environment, using webdriver-manager")
+                from webdriver_manager.chrome import ChromeDriverManager
+                from selenium.webdriver.chrome.service import Service
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=options)
 
-            # Use webdriver-manager to handle driver installation
-            driver = webdriver.Chrome(options=options)
-
+            # Set additional capabilities
+            driver.implicitly_wait(10)
+            driver.set_page_load_timeout(60)
+            
             # Remove automation indicators
             driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -165,30 +261,84 @@ class DrayDogDownloader:
         Returns:
             True if navigation successful, False otherwise
         """
-        try:
-            if not self.driver:
-                self.driver = self._setup_driver()
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                if not self.driver:
+                    self.driver = self._setup_driver()
 
-            # Construct URL - directly access without login
-            base_url = f"https://app.draydog.com/terminal_cameras/apm?streamName={stream_name}#camera-history"
+                # Construct URL - directly access without login
+                base_url = f"https://app.draydog.com/terminal_cameras/apm?streamName={stream_name}#camera-history"
 
-            logger.info(f"Navigating to camera history for stream: {stream_name}")
-            self.driver.get(base_url)
+                logger.info(f"Navigating to camera history for stream: {stream_name} (attempt {attempt + 1}/{max_attempts})")
+                
+                # Set page load timeout
+                self.driver.set_page_load_timeout(60)
+                
+                # Navigate to URL
+                self.driver.get(base_url)
+                
+                # Add explicit wait for page to fully load
+                time.sleep(3)
+                
+                # Wait for page to load with multiple fallback selectors
+                wait = WebDriverWait(self.driver, self.timeout)
+                
+                # Try multiple possible selectors for the camera history page
+                selectors_to_try = [
+                    (By.CLASS_NAME, "el-image"),
+                    (By.CSS_SELECTOR, "img[src*='cdn.draydog.com']"),
+                    (By.CSS_SELECTOR, "[class*='camera']"),
+                    (By.CSS_SELECTOR, "[class*='history']"),
+                    (By.TAG_NAME, "img"),
+                ]
+                
+                element_found = False
+                for selector_type, selector_value in selectors_to_try:
+                    try:
+                        wait.until(EC.presence_of_element_located((selector_type, selector_value)))
+                        element_found = True
+                        logger.info(f"Found element with selector: {selector_type}={selector_value}")
+                        break
+                    except TimeoutException:
+                        continue
+                
+                if not element_found:
+                    # Try to check if page loaded at all
+                    page_source = self.driver.page_source
+                    if "camera" in page_source.lower() or "draydog" in page_source.lower():
+                        logger.warning("Page loaded but expected elements not found, proceeding anyway")
+                        element_found = True
+                    else:
+                        raise TimeoutException("Page did not load expected content")
 
-            # Wait for page to load
-            wait = WebDriverWait(self.driver, self.timeout)
-            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "el-image")))
+                # If specific date requested, navigate to it
+                if date_str:
+                    self._navigate_to_date(date_str)
 
-            # If specific date requested, navigate to it
-            if date_str:
-                self._navigate_to_date(date_str)
+                logger.info("Successfully navigated to camera history page")
+                return True
 
-            logger.info("Successfully navigated to camera history page")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to navigate to camera history: {e}")
-            return False
+            except TimeoutException as e:
+                logger.warning(f"Timeout navigating to camera history (attempt {attempt + 1}): {e}")
+                if attempt < max_attempts - 1:
+                    logger.info("Retrying navigation...")
+                    time.sleep(2)
+                    continue
+                else:
+                    logger.error("All navigation attempts failed")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Failed to navigate to camera history: {e}")
+                if attempt < max_attempts - 1:
+                    logger.info("Retrying navigation...")
+                    time.sleep(2)
+                    continue
+                else:
+                    return False
+        
+        return False
 
     def _navigate_to_date(self, date_str: str) -> bool:
         """
@@ -235,89 +385,163 @@ class DrayDogDownloader:
             if not self.driver:
                 raise RuntimeError("Driver not initialized")
 
-            # Wait for images to load
+            # Wait for page content with multiple fallback options
             wait = WebDriverWait(self.driver, self.timeout)
-            wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".el-image__inner"))
-            )
+            
+            # Try different selectors for image elements
+            image_selectors = [
+                ".el-image__inner",
+                "img[src*='cdn.draydog.com']",
+                "img[src*='draydog']",
+                ".el-image img",
+                "img"
+            ]
+            
+            images_found = False
+            for selector in image_selectors:
+                try:
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                    images_found = True
+                    logger.info(f"Found images with selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not images_found:
+                logger.warning("No image elements found on page")
+                # Try to extract from page source as fallback
+                page_source = self.driver.page_source
+                import re
+                pattern = r'https?://[^"\s]*cdn\.draydog\.com[^"\s]*\.(?:jpg|jpeg|png)'
+                urls = re.findall(pattern, page_source)
+                if urls:
+                    logger.info(f"Found {len(urls)} image URLs in page source")
+                    image_data = []
+                    for url in urls:
+                        if '-thumbnail' not in url and '_thumb' not in url:
+                            filename = url.split('/')[-1]
+                            image_data.append({
+                                'url': url,
+                                'filename': filename,
+                                'timestamp': filename.split('-')[0] if '-' in filename else 'unknown',
+                                'captureTime': None,
+                                'index': len(image_data),
+                                'streamName': 'unknown'
+                            })
+                    return image_data
+                return []
 
-            # Extract image data using JavaScript
-            image_data = self.driver.execute_script(
-                """
-                const images = [];
-                const imageElements = document.querySelectorAll('.el-image__inner');
-                
-                imageElements.forEach((img, index) => {
-                    if (img.src && img.src.includes('cdn.draydog.com')) {
-                        // Skip thumbnail images - only get full-size images
-                        if (img.src.includes('-thumbnail') || img.src.includes('_thumb')) {
-                            return;
-                        }
-                        
-                        const urlParts = img.src.split('/');
-                        const filename = urlParts[urlParts.length - 1];
-                        
-                        // Also construct the full-size URL by removing any thumbnail suffix
-                        let fullSizeUrl = img.src;
-                        if (img.src.includes('-thumbnail')) {
-                            fullSizeUrl = img.src.replace('-thumbnail', '');
-                        }
-                        
-                        const timestampPart = filename.split('-')[0];
-                        
-                        // Try to extract additional metadata from DOM
-                        const parentElement = img.closest('.el-image');
-                        let captureTime = null;
-                        
-                        // Look for timestamp information in nearby elements
-                        const timeElement = parentElement ? 
-                            parentElement.querySelector('[data-timestamp], .timestamp, .time') : null;
-                        if (timeElement) {
-                            captureTime = timeElement.textContent || timeElement.getAttribute('data-timestamp');
-                        }
-                        
-                        images.push({
-                            url: fullSizeUrl,
-                            filename: filename.replace('-thumbnail', '').replace('_thumb', ''),
-                            timestamp: timestampPart,
-                            captureTime: captureTime,
-                            index: index,
-                            streamName: new URLSearchParams(window.location.search).get('streamName') || 'unknown'
-                        });
+            # Extract image data using JavaScript with improved error handling
+            image_data = self.driver.execute_script("""
+                try {
+                    const images = [];
+                    
+                    // Try multiple ways to find images
+                    let imageElements = document.querySelectorAll('.el-image__inner');
+                    if (imageElements.length === 0) {
+                        imageElements = document.querySelectorAll('img[src*="cdn.draydog.com"]');
                     }
-                });
-                
-                // If no full-size images found, try to get them from thumbnail URLs
-                if (images.length === 0) {
+                    if (imageElements.length === 0) {
+                        imageElements = document.querySelectorAll('img[src*="draydog"]');
+                    }
+                    if (imageElements.length === 0) {
+                        imageElements = document.querySelectorAll('img');
+                    }
+                    
+                    console.log('Found ' + imageElements.length + ' image elements');
+                    
                     imageElements.forEach((img, index) => {
-                        if (img.src && img.src.includes('cdn.draydog.com')) {
-                            // Convert thumbnail URL to full-size URL
-                            let fullSizeUrl = img.src.replace('-thumbnail', '').replace('_thumb', '');
+                        if (img.src && (img.src.includes('cdn.draydog.com') || img.src.includes('draydog'))) {
+                            // Skip thumbnail images - only get full-size images
+                            let fullSizeUrl = img.src;
+                            let isThumbnail = false;
+                            
+                            if (img.src.includes('-thumbnail') || img.src.includes('_thumb')) {
+                                isThumbnail = true;
+                                // Convert thumbnail to full-size URL
+                                fullSizeUrl = img.src.replace('-thumbnail', '').replace('_thumb', '');
+                            }
+                            
                             const urlParts = fullSizeUrl.split('/');
                             const filename = urlParts[urlParts.length - 1];
-                            const timestampPart = filename.split('-')[0];
+                            
+                            // Clean up the filename
+                            const cleanFilename = filename.replace('-thumbnail', '').replace('_thumb', '');
+                            
+                            const timestampPart = cleanFilename.split('-')[0] || 'unknown';
+                            
+                            // Try to get stream name from URL or page
+                            let streamName = 'unknown';
+                            try {
+                                const urlParams = new URLSearchParams(window.location.search);
+                                streamName = urlParams.get('streamName') || 'unknown';
+                            } catch(e) {
+                                console.log('Could not extract stream name');
+                            }
                             
                             images.push({
                                 url: fullSizeUrl,
-                                filename: filename,
+                                filename: cleanFilename,
                                 timestamp: timestampPart,
                                 captureTime: null,
                                 index: index,
-                                streamName: new URLSearchParams(window.location.search).get('streamName') || 'unknown'
+                                streamName: streamName,
+                                wasThumbnail: isThumbnail
                             });
                         }
                     });
+                    
+                    // Deduplicate by URL
+                    const uniqueImages = [];
+                    const seenUrls = new Set();
+                    for (const img of images) {
+                        if (!seenUrls.has(img.url)) {
+                            seenUrls.add(img.url);
+                            uniqueImages.push(img);
+                        }
+                    }
+                    
+                    console.log('Extracted ' + uniqueImages.length + ' unique images');
+                    return uniqueImages;
+                } catch(error) {
+                    console.error('Error extracting images:', error);
+                    return [];
                 }
-                
-                return images;
-            """
-            )
+            """)
+
+            if not image_data:
+                logger.warning("JavaScript extraction returned no images")
+                return []
 
             logger.info(f"Extracted {len(image_data)} full-size image URLs")
             return image_data
 
         except Exception as e:
             logger.error(f"Failed to extract image URLs: {e}")
+            # Try one more fallback - extract from page source
+            try:
+                page_source = self.driver.page_source
+                import re
+                pattern = r'https?://[^"\s]*cdn\.draydog\.com[^"\s]*\.(?:jpg|jpeg|png)'
+                urls = re.findall(pattern, page_source)
+                if urls:
+                    logger.info(f"Fallback: Found {len(urls)} image URLs in page source")
+                    image_data = []
+                    for url in urls:
+                        if '-thumbnail' not in url and '_thumb' not in url:
+                            filename = url.split('/')[-1]
+                            image_data.append({
+                                'url': url,
+                                'filename': filename,
+                                'timestamp': filename.split('-')[0] if '-' in filename else 'unknown',
+                                'captureTime': None,
+                                'index': len(image_data),
+                                'streamName': 'unknown'
+                            })
+                    return image_data
+            except:
+                pass
+            
             return []
 
     def download_image(self, image_info: Dict[str, str]) -> Optional[str]:
@@ -901,19 +1125,20 @@ if __name__ == "__main__":
 
     def main():
         parser = argparse.ArgumentParser(
-            description="Download Dray Dog camera images",
+            description="Download Dray Dog camera images (no authentication required)",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  python selenium_client.py --username myuser --password mypass
-  python selenium_client.py --username myuser --password mypass --date 2025-09-07
-  python selenium_client.py --username myuser --password mypass --stream out_gate
-  python selenium_client.py --username myuser --password mypass --date-range 2025-09-01 2025-09-07
+  python selenium_client.py
+  python selenium_client.py --date 2025-09-07
+  python selenium_client.py --stream out_gate
+  python selenium_client.py --date-range 2025-09-01 2025-09-07
             """,
         )
 
-        parser.add_argument("--username", required=True, help="Dray Dog username")
-        parser.add_argument("--password", required=True, help="Dray Dog password")
+        # Make username and password optional since Dray Dog doesn't require authentication
+        parser.add_argument("--username", required=False, help="Dray Dog username (not required)")
+        parser.add_argument("--password", required=False, help="Dray Dog password (not required)")
         parser.add_argument("--date", help="Date in YYYY-MM-DD format (default: today)")
         parser.add_argument(
             "--date-range",

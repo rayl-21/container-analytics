@@ -1,118 +1,4 @@
 """
-Container Analytics - Live Camera Feed
-
-This page shows the latest camera images with real-time detections,
-confidence scores, and container tracking information.
-"""
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import numpy as np
-from typing import Dict, List, Optional, Tuple
-import time
-from PIL import Image, ImageDraw, ImageFont
-import io
-import base64
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-from modules.database import queries
-from modules.database.models import session_scope, Container, Detection, Image as DBImage
-from modules.detection.yolo_detector import YOLODetector
-from modules.downloader.selenium_client import DrayDogDownloader
-import os
-import random
-import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from loguru import logger
-
-# Configure page
-st.set_page_config(
-    page_title="Live Feed - Container Analytics",
-    page_icon="🖼️",
-    layout="wide"
-)
-
-# Custom CSS for live feed styling
-st.markdown("""
-<style>
-.live-header {
-    font-size: 2.2rem;
-    font-weight: bold;
-    color: #1f77b4;
-    margin-bottom: 1rem;
-}
-
-.detection-card {
-    background-color: #f8f9fa;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    border-left: 4px solid #28a745;
-    margin: 0.5rem 0;
-}
-
-.detection-card.warning {
-    border-left-color: #ffc107;
-}
-
-.detection-card.error {
-    border-left-color: #dc3545;
-}
-
-.confidence-bar {
-    background-color: #e9ecef;
-    border-radius: 10px;
-    overflow: hidden;
-    height: 20px;
-    margin: 0.25rem 0;
-}
-
-.confidence-fill {
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 0.8rem;
-    font-weight: bold;
-}
-
-.live-indicator {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    background-color: #28a745;
-    border-radius: 50%;
-    animation: blink 2s infinite;
-    margin-right: 0.5rem;
-}
-
-@keyframes blink {
-    0%, 50% { opacity: 1; }
-    51%, 100% { opacity: 0.3; }
-}
-
-.camera-feed {
-    border: 2px solid #dee2e6;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    background-color: #fff;
-}
-
-.tracking-info {
-    background-color: #e3f2fd;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    margin: 0.5rem 0;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-"""
 Container Analytics - Simplified Live Feed
 
 This page shows a clean 7-day image gallery (2025-09-01 to 2025-09-07)
@@ -120,6 +6,14 @@ with optional detection overlays and truck count badges.
 """
 
 import streamlit as st
+
+# Configure page - MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Live Feed - Container Analytics",
+    page_icon="🖼️",
+    layout="wide"
+)
+
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -131,13 +25,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 from modules.database import queries
 from modules.database.models import session_scope, Container, Detection, Image as DBImage
 from sqlalchemy import and_, desc
-
-# Configure page
-st.set_page_config(
-    page_title="Live Feed - Container Analytics",
-    page_icon="🖼️",
-    layout="wide"
-)
 
 # Simplified CSS for clean design
 st.markdown("""
@@ -223,16 +110,16 @@ def load_actual_camera_image(camera_id: str = "CAM-01", detection_data: Optional
 
 def load_7day_gallery() -> List[Dict[str, Any]]:
     """
-    Load images from the 7-day period (2025-09-01 to 2025-09-07) for gallery display.
+    Load images from the last 7 days for gallery display.
     
     Returns:
         List of image data dictionaries with detections
     """
-    from datetime import date
+    from datetime import date, timedelta
     
-    # Define the 7-day date range
-    start_date = datetime(2025, 9, 1)
-    end_date = datetime(2025, 9, 7, 23, 59, 59)
+    # Define the 7-day date range (last 7 days from today)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)
     
     gallery_images = []
     
@@ -266,9 +153,11 @@ def load_7day_gallery() -> List[Dict[str, Any]]:
                     detection_data.append(det_dict)
                 
                 # Create image data dictionary
+                # Use filepath or image_path, whichever is available
+                image_filepath = img.filepath or img.image_path
                 img_data = {
                     'id': img.id,
-                    'filepath': img.filepath,
+                    'filepath': image_filepath,
                     'camera_id': img.camera_id,
                     'timestamp': img.timestamp,
                     'processed': img.processed,
