@@ -352,6 +352,13 @@ def main():
     st.markdown("# 🖼️ Live Feed")
     st.markdown("*Image gallery with detection overlays - September 1-7, 2025*")
     
+    # Check if navigation button was clicked
+    if 'selected_nav_date' in st.session_state:
+        nav_date = st.session_state.selected_nav_date
+        del st.session_state.selected_nav_date  # Clear after using
+    else:
+        nav_date = None
+    
     # Date selector for pagination
     col1, col2, col3 = st.columns([2, 2, 1])
     
@@ -360,11 +367,17 @@ def main():
         available_dates = [date(2025, 9, d) for d in range(1, 8)]
         date_options = {d: d.strftime('%A, %B %d, %Y') for d in available_dates}
         
+        # If navigation date was selected, use it, otherwise default to Sept 1
+        if nav_date and nav_date in available_dates:
+            default_index = available_dates.index(nav_date)
+        else:
+            default_index = 0
+        
         selected_date = st.selectbox(
             "📅 Select Date",
             options=available_dates,
             format_func=lambda x: date_options[x],
-            index=0,  # Default to Sept 1
+            index=default_index,
             key="date_selector"
         )
     
@@ -375,8 +388,9 @@ def main():
         for i, (d, btn_col) in enumerate(zip(available_dates, button_cols)):
             with btn_col:
                 if st.button(f"{d.day}", use_container_width=True, 
-                           type="primary" if d == selected_date else "secondary"):
-                    st.session_state.date_selector = d
+                           type="primary" if d == selected_date else "secondary",
+                           key=f"nav_btn_{d.day}"):
+                    st.session_state.selected_nav_date = d
                     st.rerun()
     
     with col3:
@@ -384,40 +398,35 @@ def main():
         show_all = st.toggle("Show All Days", value=False, 
                            help="Display all images from Sept 1-7 (1000+ images)")
     
-    # Sidebar - Clean and minimal
+    # Sidebar - Simplified with only essential controls
     with st.sidebar:
-        st.title("Feed Controls")
+        # Data Sync toggle at top
+        pull_new_data = st.toggle("📡 Pull New Data", value=False, help="Enable to refresh data from cameras")
         
-        # Pull New Data toggle
-        st.subheader("📡 Data Sync")
-        pull_new_data = st.toggle("Pull New Data", value=False, help="Enable to refresh data from cameras")
-        
-        # Status indicators
+        # Status display
         st.subheader("📊 Status")
+        status = "🟡 Paused"
+        last_update = "Manual mode"
+        st.write(f"Status: {status}")
+        st.write(f"Last Update: {last_update}")
         
-        # Mock status for now - in real implementation this would check actual system status
-        if pull_new_data:
-            status = "🟢 Active"
-            last_update = datetime.now().strftime("%H:%M:%S")
-        else:
-            status = "🟡 Paused"
-            last_update = "Manual mode"
+        st.divider()
         
-        st.write(f"**Status:** {status}")
-        st.write(f"**Last Update:** {last_update}")
-        
-        # Detection overlay toggle
+        # Display Options
         st.subheader("🎯 Display Options")
         show_detections = st.toggle("Show Detection Overlays", value=True)
         
-        # Images per row selector
-        images_per_row = st.select_slider(
+        # Images per row
+        images_per_row = st.slider(
             "Images per row",
-            options=[2, 3, 4, 5],
+            min_value=2,
+            max_value=5,
             value=3
         )
         
-        # Manual refresh
+        st.divider()
+        
+        # Refresh button
         if st.button("🔄 Refresh Gallery", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -426,11 +435,6 @@ def main():
         
         # Statistics section
         st.subheader("📈 Statistics")
-        
-        # Navigation
-        st.divider()
-        if st.button("🏠 Back to Dashboard", use_container_width=True):
-            st.switch_page("app.py")
     
     # Load image data based on selection
     with st.spinner("Loading images..."):
@@ -520,7 +524,7 @@ def main():
                 current_idx = available_dates.index(selected_date)
                 if current_idx > 0:
                     if st.button("⬅️ Previous Day", use_container_width=True):
-                        st.session_state.date_selector = available_dates[current_idx - 1]
+                        st.session_state.selected_nav_date = available_dates[current_idx - 1]
                         st.rerun()
             
             with nav_cols[1]:
@@ -530,7 +534,7 @@ def main():
                 # Next day button
                 if current_idx < len(available_dates) - 1:
                     if st.button("Next Day ➡️", use_container_width=True):
-                        st.session_state.date_selector = available_dates[current_idx + 1]
+                        st.session_state.selected_nav_date = available_dates[current_idx + 1]
                         st.rerun()
     
     else:
