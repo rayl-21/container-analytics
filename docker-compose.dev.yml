@@ -1,0 +1,6 @@
+# Development Docker Compose - convenience wrapper
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+# This file extends the development configuration
+include:
+  - deployment/docker/docker-compose.dev.yml

@@ -1,0 +1,116 @@
+# Development Docker Compose with hot reload and debugging
+# Run with: docker-compose -f docker-compose.dev.yml up
+
+x-build-dev: &default-build-dev
+  context: ../..
+  dockerfile: deployment/docker/Dockerfile.dev
+  cache_from:
+    - type=registry,ref=container-analytics-dev:cache
+  args:
+    BUILDKIT_INLINE_CACHE: 1
+
+x-common-env: &common-env
+  PYTHONUNBUFFERED: 1
+  DATABASE_URL: sqlite:////app/data/database.db
+  DEVELOPMENT: true
+  DOCKER_CONTAINER: true
+
+services:
+  # Development Dashboard with hot reload
+  dashboard-dev:
+    build: *default-build-dev
+    container_name: container-analytics-dashboard-dev
+    environment:
+      <<: *common-env
+      SERVICE_TYPE: dashboard
+      STREAMLIT_PORT: 8501
+    ports:
+      - "8501:8501"
+    volumes:
+      # Mount source code for hot reload
+      - ../..:/app
+      - ../../data:/app/data
+      - ../../logs:/app/logs
+    command: ["dashboard"]
+    networks:
+      - container-analytics-dev
+
+  # Development Scheduler with auto-restart
+  scheduler-dev:
+    build: *default-build-dev
+    container_name: container-analytics-scheduler-dev
+    environment:
+      <<: *common-env
+      SERVICE_TYPE: scheduler
+      DOWNLOAD_INTERVAL_MINUTES: 10
+      STREAMS: in_gate
+    volumes:
+      - ../..:/app
+      - ../../data:/app/data
+      - ../../logs:/app/logs
+    command: ["scheduler"]
+    networks:
+      - container-analytics-dev
+
+  # Development Detector with auto-restart
+  detector-dev:
+    build: *default-build-dev
+    container_name: container-analytics-detector-dev
+    environment:
+      <<: *common-env
+      SERVICE_TYPE: detector
+      YOLO_MODEL_PATH: /app/data/models/yolov8x.pt
+    volumes:
+      - ../..:/app
+      - ../../data:/app/data
+      - ../../logs:/app/logs
+    command: ["detector"]
+    networks:
+      - container-analytics-dev
+
+  # Jupyter notebook for interactive development
+  jupyter:
+    build: *default-build-dev
+    container_name: container-analytics-jupyter
+    environment:
+      <<: *common-env
+      SERVICE_TYPE: jupyter
+      JUPYTER_PORT: 8888
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../..:/app
+      - ../../data:/app/data
+    command: ["jupyter"]
+    networks:
+      - container-analytics-dev
+
+  # Test runner
+  test:
+    build: *default-build-dev
+    container_name: container-analytics-test
+    environment:
+      <<: *common-env
+      SERVICE_TYPE: test
+    volumes:
+      - ../..:/app
+      - ../../data:/app/data
+    command: ["test"]
+    networks:
+      - container-analytics-dev
+    profiles:
+      - test
+
+  # Redis for development
+  redis-dev:
+    image: redis:7-alpine
+    container_name: container-analytics-redis-dev
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    networks:
+      - container-analytics-dev
+
+networks:
+  container-analytics-dev:
+    driver: bridge

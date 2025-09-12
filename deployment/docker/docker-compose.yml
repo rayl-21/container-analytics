@@ -1,31 +1,43 @@
-# Docker Compose file for Container Analytics Production Deployment
-# Compatible with Docker Compose v2+
+# Optimized Docker Compose for Container Analytics
+# Uses BuildKit cache features and optimized build strategy
+
+x-build-prod: &default-build-prod
+  context: ../..
+  dockerfile: deployment/docker/Dockerfile.prod
+  cache_from:
+    - type=registry,ref=container-analytics:cache
+  args:
+    BUILDKIT_INLINE_CACHE: 1
+
+x-common-env: &common-env
+  PYTHONUNBUFFERED: 1
+  DATABASE_URL: sqlite:////data/database.db
+  DOCKER_CONTAINER: true
+
+x-healthcheck: &default-healthcheck
+  interval: 2m
+  timeout: 30s
+  start_period: 1m
+  retries: 3
 
 services:
   # Image Download Scheduler Service
   scheduler:
-    build: 
-      context: ../../
-      dockerfile: Dockerfile
+    build: *default-build-prod
     container_name: container-analytics-scheduler
-    restart: always
+    restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
-      - SERVICE_TYPE=scheduler
-      - DOWNLOAD_INTERVAL_MINUTES=${DOWNLOAD_INTERVAL_MINUTES:-10}
-      - RETENTION_DAYS=${RETENTION_DAYS:-30}
-      - STREAMS=${STREAMS:-in_gate}
-      - DATABASE_URL=sqlite:////data/database.db
+      <<: *common-env
+      SERVICE_TYPE: scheduler
+      DOWNLOAD_INTERVAL_MINUTES: ${DOWNLOAD_INTERVAL_MINUTES:-10}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      STREAMS: ${STREAMS:-in_gate}
     volumes:
-      - app_data:/data
-      - app_logs:/logs
-      - yolo_models:/app/data/models
+      - ../../data:/data
+      - ../../logs:/logs
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD", "python", "/app/health_check.py"]
-      interval: 2m
-      timeout: 30s
-      start_period: 1m
-      retries: 3
     deploy:
       resources:
         limits:
@@ -37,30 +49,24 @@ services:
     networks:
       - container-analytics
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   # YOLO Detection Service
   detector:
-    build: 
-      context: ../../
-      dockerfile: Dockerfile
+    build: *default-build-prod
     container_name: container-analytics-detector
-    restart: always
+    restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
-      - SERVICE_TYPE=detector
-      - DATABASE_URL=sqlite:////data/database.db
-      - YOLO_MODEL_PATH=/app/data/models/yolov8x.pt
+      <<: *common-env
+      SERVICE_TYPE: detector
+      YOLO_MODEL_PATH: /data/models/yolov8x.pt
     volumes:
-      - app_data:/data
-      - app_logs:/logs
-      - yolo_models:/app/data/models
+      - ../../data:/data
+      - ../../logs:/logs
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD", "python", "/app/health_check.py"]
-      interval: 2m
-      timeout: 30s
-      start_period: 2m
-      retries: 3
     deploy:
       resources:
         limits:
@@ -77,28 +83,27 @@ services:
     networks:
       - container-analytics
     depends_on:
-      - scheduler
-      - redis
+      scheduler:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # Streamlit Dashboard Service
   dashboard:
-    build: 
-      context: ../../
-      dockerfile: Dockerfile
+    build: *default-build-prod
     container_name: container-analytics-dashboard
-    restart: always
+    restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
-      - SERVICE_TYPE=dashboard
-      - STREAMLIT_PORT=8501
-      - DATABASE_URL=sqlite:////data/database.db
+      <<: *common-env
+      SERVICE_TYPE: dashboard
+      STREAMLIT_PORT: 8501
     ports:
       - "${DASHBOARD_PORT:-8501}:8501"
     volumes:
-      - app_data:/data
-      - app_logs:/logs
+      - ../../data:/data:ro  # Read-only for dashboard
+      - ../../logs:/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8501/_stcore/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -113,25 +118,24 @@ services:
     networks:
       - container-analytics
     depends_on:
-      - scheduler
+      scheduler:
+        condition: service_started
 
   # Prometheus Metrics Service
   metrics:
-    build: 
-      context: ../../
-      dockerfile: Dockerfile
+    build: *default-build-prod
     container_name: container-analytics-metrics
-    restart: always
+    restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
-      - SERVICE_TYPE=metrics
+      <<: *common-env
+      SERVICE_TYPE: metrics
     ports:
       - "${METRICS_PORT:-9090}:9090"
     volumes:
-      - app_data:/data
-      - app_logs:/logs
+      - ../../data:/data:ro
+      - ../../logs:/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/metrics"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -145,12 +149,14 @@ services:
           memory: 128M
     networks:
       - container-analytics
+    profiles:
+      - monitoring
 
   # Redis Cache Service
   redis:
     image: redis:7-alpine
     container_name: container-analytics-redis
-    restart: always
+    restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -174,16 +180,16 @@ services:
   nginx:
     image: nginx:alpine
     container_name: container-analytics-nginx
-    restart: always
+    restart: unless-stopped
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
-      - app_logs:/var/log/nginx
+      - ../../logs/nginx:/var/log/nginx
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -198,8 +204,10 @@ services:
     networks:
       - container-analytics
     depends_on:
-      - dashboard
-      - metrics
+      dashboard:
+        condition: service_healthy
+      metrics:
+        condition: service_started
     profiles:
       - production  # Only start with --profile production
 
@@ -207,7 +215,7 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: container-analytics-loki
-    restart: always
+    restart: unless-stopped
     ports:
       - "3100:3100"
     volumes:
@@ -236,7 +244,7 @@ services:
   grafana:
     image: grafana/grafana:10.1.0
     container_name: container-analytics-grafana
-    restart: always
+    restart: unless-stopped
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
@@ -247,7 +255,7 @@ services:
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -262,28 +270,16 @@ services:
     networks:
       - container-analytics
     depends_on:
-      - metrics
-      - loki
+      metrics:
+        condition: service_started
+      loki:
+        condition: service_started
     profiles:
       - monitoring  # Only start with --profile monitoring
 
 volumes:
-  app_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_DIR:-/Users/rayli/Documents/container-analytics/data}
-  app_logs:
-    driver: local
   redis_data:
     driver: local
-  yolo_models:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${MODELS_DIR:-/Users/rayli/Documents/container-analytics/data/models}
   loki_data:
     driver: local
   grafana_data:
