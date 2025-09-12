@@ -29,7 +29,8 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent
 from contextlib import contextmanager
 
 # Import database models and session management
-from modules.database.models import session_scope, Image as ImageModel, Detection as DetectionModel
+from modules.database.models import session_scope, Image as ImageModel, Detection as DetectionModel, Container
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
