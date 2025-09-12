@@ -6,6 +6,7 @@ camera history page using Selenium WebDriver.
 """
 
 import os
+import sys
 import json
 import time
 import hashlib
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
@@ -343,6 +345,11 @@ class DrayDogDownloader:
     def _navigate_to_date(self, date_str: str) -> bool:
         """
         Navigate to a specific date in the camera history.
+        
+        The Dray Dog UI uses a client-side date picker that:
+        1. Doesn't change the URL when selecting a date
+        2. Loads images dynamically after date selection
+        3. May show thumbnails from nearby dates at the top
 
         Args:
             date_str: Date string in YYYY-MM-DD format
@@ -351,26 +358,83 @@ class DrayDogDownloader:
             True if date navigation successful, False otherwise
         """
         try:
-            # Click on date picker
-            date_picker = self.driver.find_element(By.CLASS_NAME, "el-date-editor")
+            wait = WebDriverWait(self.driver, self.timeout)
+            
+            # Find and click the date picker (it's a combobox element)
+            logger.info(f"Opening date picker to navigate to {date_str}")
+            date_picker = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, ".el-date-editor"))
+            )
             date_picker.click()
-
-            # Clear existing date and enter new date
+            
+            # Wait for calendar to open
+            time.sleep(1)
+            
+            # Find the input field within the date picker
             date_input = self.driver.find_element(
                 By.CSS_SELECTOR, ".el-date-editor input"
             )
-            date_input.clear()
+            
+            # Clear the input field completely using keyboard shortcuts
+            date_input.click()
+            # Use Command+A on Mac, Ctrl+A on other platforms
+            if sys.platform == "darwin":
+                date_input.send_keys(Keys.COMMAND + "a")
+            else:
+                date_input.send_keys(Keys.CONTROL + "a")
+            date_input.send_keys(Keys.DELETE)
+            
+            # Enter the new date
             date_input.send_keys(date_str)
-
-            # Press Enter or click outside to apply date change
-            date_input.send_keys("\n")
-            time.sleep(2)  # Wait for page to reload with new date
-
-            logger.info(f"Navigated to date: {date_str}")
-            return True
+            date_input.send_keys(Keys.ENTER)
+            
+            logger.info(f"Date entered, waiting for images to load for {date_str}")
+            
+            # Wait for the page to update with new images
+            # The page loads images dynamically, so we need to wait
+            time.sleep(3)
+            
+            # Verify that images from the selected date are loaded
+            # Note: The page may show thumbnails from other dates, so we check for majority
+            verification_attempts = 3
+            for attempt in range(verification_attempts):
+                # Get all image URLs
+                images = self.driver.find_elements(By.CSS_SELECTOR, "img[src*='cdn.draydog.com']")
+                
+                if images:
+                    # Count how many images are from the target date
+                    target_date_count = 0
+                    total_checked = min(20, len(images))  # Check first 20 images
+                    
+                    for img in images[:total_checked]:
+                        src = img.get_attribute("src")
+                        if src and date_str in src:
+                            target_date_count += 1
+                    
+                    # If at least 30% of checked images are from target date, consider it successful
+                    if target_date_count >= total_checked * 0.3:
+                        logger.info(f"Successfully navigated to {date_str} ({target_date_count}/{total_checked} images verified)")
+                        return True
+                    
+                    logger.debug(f"Attempt {attempt + 1}: Found {target_date_count}/{total_checked} images from {date_str}")
+                
+                if attempt < verification_attempts - 1:
+                    # Wait a bit more for images to load
+                    time.sleep(2)
+            
+            # If we couldn't verify images, check if the date picker at least shows the correct date
+            current_value = date_input.get_attribute("value")
+            if date_str in current_value:
+                logger.warning(f"Date picker shows {current_value} but couldn't verify images are from {date_str}")
+                # Give it one more chance to load
+                time.sleep(2)
+                return True
+            
+            logger.error(f"Failed to navigate to {date_str}")
+            return False
 
         except Exception as e:
-            logger.warning(f"Failed to navigate to specific date {date_str}: {e}")
+            logger.error(f"Error navigating to date {date_str}: {e}")
             return False
 
     def extract_image_urls(self) -> List[Dict[str, str]]:
@@ -1062,11 +1126,14 @@ class DrayDogDownloader:
     ) -> Dict[str, List[str]]:
         """
         Download images for a range of dates.
-        No authentication required - direct public access.
+        
+        Since the Dray Dog UI doesn't change URL when navigating dates,
+        we maintain a single browser session and navigate through dates
+        using the date picker.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
-            end_date: End date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format  
             stream_name: Camera stream name
 
         Returns:
@@ -1077,23 +1144,62 @@ class DrayDogDownloader:
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-
+            
+            # Navigate to camera history once
+            logger.info(f"Navigating to camera history for stream: {stream_name}")
+            if not self.navigate_to_camera_history(stream_name):
+                raise RuntimeError("Failed to navigate to camera history")
+            
+            # Process each date in the range
             current_dt = start_dt
             while current_dt <= end_dt:
                 date_str = current_dt.strftime("%Y-%m-%d")
-                logger.info(f"Downloading images for date: {date_str}")
-
-                downloaded_files = self.download_images_for_date(date_str, stream_name)
-                results[date_str] = downloaded_files
-
+                logger.info(f"Processing date: {date_str}")
+                
+                # Navigate to the specific date
+                if self._navigate_to_date(date_str):
+                    # Extract and download images
+                    image_data = self.extract_image_urls()
+                    
+                    if image_data:
+                        logger.info(f"Found {len(image_data)} images for {date_str}")
+                        downloaded_files = []
+                        
+                        for img_info in image_data:
+                            try:
+                                filepath = self.download_image(img_info)
+                                if filepath:
+                                    downloaded_files.append(filepath)
+                            except Exception as e:
+                                logger.error(f"Failed to download image: {e}")
+                                continue
+                        
+                        results[date_str] = downloaded_files
+                        logger.info(f"Downloaded {len(downloaded_files)} images for {date_str}")
+                    else:
+                        logger.warning(f"No images found for {date_str}")
+                        results[date_str] = []
+                else:
+                    logger.error(f"Failed to navigate to date: {date_str}")
+                    results[date_str] = []
+                
                 # Move to next day
                 current_dt += timedelta(days=1)
+                
+                # Small delay between dates to avoid overwhelming the server
+                if current_dt <= end_dt:
+                    time.sleep(2)
 
-                # Add delay between date downloads to be respectful
-                time.sleep(5)
+            logger.info(f"Date range download completed. Processed {len(results)} dates.")
 
         except Exception as e:
             logger.error(f"Date range download failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            # Cleanup will be called by context manager or explicitly
+            pass
 
         return results
 
