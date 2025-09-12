@@ -71,7 +71,7 @@ class DownloadConfig:
 
     def __post_init__(self):
         if self.stream_names is None:
-            self.stream_names = ["in_gate", "out_gate"]
+            self.stream_names = ["in_gate"]
         # Sync legacy fields with new fields for backward compatibility
         if hasattr(self, "interval_minutes") and self.interval_minutes != 10:
             self.download_interval_minutes = self.interval_minutes
@@ -868,7 +868,7 @@ def main():
         epilog="""
 Configuration File Format (JSON):
 {
-  "stream_names": ["in_gate", "out_gate"],
+  "stream_names": ["in_gate"],
   "download_dir": "data/images",
   "interval_minutes": 10,
   "headless": true,
@@ -879,7 +879,7 @@ Configuration File Format (JSON):
 
 Examples:
   python scheduler.py --config config.json
-  python scheduler.py --streams in_gate out_gate
+  python scheduler.py --streams in_gate
   python scheduler.py --config config.json --stats
         """,
     )

@@ -115,7 +115,7 @@ pip install -r requirements.txt
 streamlit run app.py
 
 # Start image downloader service (scheduled downloads)
-python -m modules.downloader.scheduler --streams in_gate out_gate
+python -m modules.downloader.scheduler --streams in_gate
 
 # Run YOLO detector with file watching (continuous detection)
 python -m modules.detection.yolo_detector --watch

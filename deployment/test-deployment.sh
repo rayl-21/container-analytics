@@ -334,7 +334,7 @@ perform_integration_test() {
     
     # Create minimal test environment
     export DOWNLOAD_INTERVAL_MINUTES=10
-    export STREAMS="in_gate out_gate"
+    export STREAMS="in_gate"
     export DATABASE_URL="sqlite:////tmp/test_database.db"
     export DATA_DIR="/tmp/container-analytics-test"
     export MODELS_DIR="/tmp/container-analytics-test/models"

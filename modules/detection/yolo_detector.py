@@ -745,8 +745,6 @@ class YOLODetector:
         
         if 'in_gate' in filename or 'in-gate' in filename:
             return 'in_gate'
-        elif 'out_gate' in filename or 'out-gate' in filename:
-            return 'out_gate'
         elif 'gate' in filename:
             return 'gate'
         else:

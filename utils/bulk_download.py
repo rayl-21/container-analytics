@@ -116,7 +116,7 @@ class BulkImageDownloader:
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format (inclusive)
-            streams: List of stream names (e.g., ['in_gate', 'out_gate'])
+            streams: List of stream names (e.g., ['in_gate'])
             max_images_per_date: Optional limit on images per date per stream
             
         Returns:
@@ -426,12 +426,10 @@ class BulkImageDownloader:
             stream_name = None
             if 'in_gate' in filename:
                 stream_name = 'in_gate'
-            elif 'out_gate' in filename:
-                stream_name = 'out_gate'
             else:
                 # Check parent directory
                 for part in file_path.parts:
-                    if part in ['in_gate', 'out_gate']:
+                    if part == 'in_gate':
                         stream_name = part
                         break
             
@@ -463,7 +461,7 @@ def main():
     # Default configuration
     start_date = "2025-09-01"
     end_date = "2025-09-07"
-    streams = ["in_gate", "out_gate"]
+    streams = ["in_gate"]
     
     logger.info(f"Starting bulk download: {start_date} to {end_date}")
     

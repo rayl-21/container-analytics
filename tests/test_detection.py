@@ -1225,7 +1225,7 @@ class TestYOLODetectorDatabaseIntegration:
             
             # Test various path patterns
             assert detector._extract_camera_id_from_path(Path("data/images/in_gate_123.jpg")) == "in_gate"
-            assert detector._extract_camera_id_from_path(Path("data/images/out-gate-456.jpg")) == "out_gate"
+            assert detector._extract_camera_id_from_path(Path("data/images/gate-456.jpg")) == "gate"
             assert detector._extract_camera_id_from_path(Path("data/images/gate_789.jpg")) == "gate"
             assert detector._extract_camera_id_from_path(Path("data/images/random_image.jpg")) == "unknown"
             assert detector._extract_camera_id_from_path(Path("data/camera_feed/random_image.jpg")) == "camera_feed"

@@ -220,12 +220,11 @@ class TestBulkImageDownloader:
                 results = downloader.download_date_range(
                     start_date="2025-09-01",
                     end_date="2025-09-01",
-                    streams=["in_gate", "out_gate"]
+                    streams=["in_gate"]
                 )
                 
-                # Verify results - one success, one failure
+                # Verify results - one success
                 assert results["2025-09-01"]["in_gate"] == ["/path/to/image1.jpg"]
-                assert results["2025-09-01"]["out_gate"] == []
                 
                 # Verify stats
                 assert downloader.stats.successful_downloads == 1
@@ -251,12 +250,6 @@ class TestBulkImageDownloader:
                     'camera_id': 'in_gate',
                     'timestamp': datetime(2025, 9, 1, 10, 0, 0),
                     'file_size': 1024
-                },
-                {
-                    'filepath': '/path/to/image2.jpg',
-                    'camera_id': 'out_gate',
-                    'timestamp': datetime(2025, 9, 1, 10, 10, 0),
-                    'file_size': 2048
                 },
                 {
                     'filepath': '/path/to/image3.jpg',
@@ -286,13 +279,13 @@ class TestBulkImageDownloader:
             
             metadata_list = [
                 {'filepath': '/path/1.jpg', 'camera_id': 'in_gate', 'file_size': 1024},
-                {'filepath': '/path/2.jpg', 'camera_id': 'out_gate', 'file_size': 2048},
+                {'filepath': '/path/2.jpg', 'camera_id': 'in_gate', 'file_size': 2048},
                 {'filepath': '/path/3.jpg', 'camera_id': 'in_gate', 'file_size': 512}
             ]
             
             saved_count = downloader.save_to_database(metadata_list)
             
-            assert saved_count == 2  # Only 2 successful saves
+            assert saved_count == 3  # All 3 successful saves
     
     def test_organize_files_success(self, temp_dir):
         """Test successful file organization."""
@@ -425,11 +418,11 @@ class TestBulkImageDownloader:
             assert date_str == "2025-09-01"
             assert stream_name == "in_gate"
             
-            # Test with out_gate
-            test_path = Path("20250902150000_out_gate.jpg")
+            # Test with different filename pattern
+            test_path = Path("20250902150000_gate.jpg")
             date_str, stream_name = downloader._extract_file_info(test_path)
             assert date_str == "2025-09-02"
-            assert stream_name == "out_gate"
+            assert stream_name is None  # No recognized stream name
             
             # Test path with directory structure
             test_path = Path("data/images/2025-09-03/in_gate/image.jpg")
@@ -482,8 +475,8 @@ def test_main_function(mock_logger, temp_dir):
         
         # Mock download results
         mock_results = {
-            "2025-09-01": {"in_gate": ["/file1.jpg"], "out_gate": ["/file2.jpg"]},
-            "2025-09-02": {"in_gate": ["/file3.jpg"], "out_gate": ["/file4.jpg"]}
+            "2025-09-01": {"in_gate": ["/file1.jpg", "/file2.jpg"]},
+            "2025-09-02": {"in_gate": ["/file3.jpg", "/file4.jpg"]}
         }
         mock_downloader.download_date_range.return_value = mock_results
         
@@ -517,7 +510,7 @@ def test_main_function(mock_logger, temp_dir):
         mock_downloader.download_date_range.assert_called_once_with(
             start_date="2025-09-01",
             end_date="2025-09-07",
-            streams=["in_gate", "out_gate"]
+            streams=["in_gate"]
         )
         
         # Verify report generation
@@ -548,7 +541,7 @@ def sample_image_metadata():
         },
         {
             'filepath': '/data/images/2025-09-01/image2.jpg',
-            'camera_id': 'out_gate',
+            'camera_id': 'in_gate',
             'timestamp': datetime(2025, 9, 1, 10, 10, 0),
             'file_size': 2048
         }
@@ -560,11 +553,9 @@ def mock_download_results():
     """Mock download results for testing."""
     return {
         "2025-09-01": {
-            "in_gate": ["/data/images/2025-09-01/in_gate/img1.jpg"],
-            "out_gate": ["/data/images/2025-09-01/out_gate/img2.jpg"]
+            "in_gate": ["/data/images/2025-09-01/in_gate/img1.jpg", "/data/images/2025-09-01/in_gate/img2.jpg"]
         },
         "2025-09-02": {
-            "in_gate": ["/data/images/2025-09-02/in_gate/img3.jpg"],
-            "out_gate": []  # Simulated failure
+            "in_gate": ["/data/images/2025-09-02/in_gate/img3.jpg"]
         }
     }

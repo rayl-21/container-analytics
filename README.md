@@ -113,7 +113,7 @@ docker-compose -f deployment/docker/docker-compose.yml down
 ### Start Image Downloader
 ```bash
 # Automated scheduling (recommended - runs every 10 minutes)
-python -m modules.downloader.scheduler --streams in_gate out_gate
+python -m modules.downloader.scheduler --streams in_gate
 
 # One-time download (specific date)
 python -m modules.downloader.selenium_client --date 2025-09-07
@@ -176,7 +176,7 @@ pytest tests/test_e2e_pipeline.py -v    # End-to-end tests
 ## 🔧 Configuration
 
 Edit `.env` file for:
-- Stream names (in_gate, out_gate)
+- Stream names (in_gate)
 - Detection thresholds
 - Alert settings and email notifications
 - Database configuration
@@ -196,7 +196,7 @@ Edit `.env` file for:
 
 1. **Install dependencies**: `pip install -r requirements.txt`
 2. **Initialize database**: `python -m modules.database.models --init`
-3. **Start scheduler**: `python -m modules.downloader.scheduler --streams in_gate out_gate`
+3. **Start scheduler**: `python -m modules.downloader.scheduler --streams in_gate`
 4. **Deploy to production**: Use systemd or Docker configurations
 5. **Monitor system**: Check logs and health status regularly
 

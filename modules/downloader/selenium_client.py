@@ -257,7 +257,7 @@ class DrayDogDownloader:
         No authentication required - direct public access.
 
         Args:
-            stream_name: Camera stream name (e.g., 'in_gate', 'out_gate')
+            stream_name: Camera stream name (e.g., 'in_gate')
             date_str: Specific date in YYYY-MM-DD format, None for today
 
         Returns:
@@ -1237,7 +1237,7 @@ if __name__ == "__main__":
 Examples:
   python selenium_client.py
   python selenium_client.py --date 2025-09-07
-  python selenium_client.py --stream out_gate
+  python selenium_client.py --stream in_gate
   python selenium_client.py --date-range 2025-09-01 2025-09-07
             """,
         )

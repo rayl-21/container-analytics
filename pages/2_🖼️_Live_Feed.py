@@ -80,9 +80,9 @@ def load_actual_camera_image(camera_id: str = "CAM-01", detection_data: Optional
         # Map camera IDs to stream names
         stream_map = {
             "CAM-01": "in_gate",
-            "CAM-02": "out_gate",
+            "CAM-02": "in_gate",
             "CAM-03": "in_gate",
-            "CAM-04": "out_gate"
+            "CAM-04": "in_gate"
         }
         
         target_stream = stream_map.get(camera_id, "in_gate")

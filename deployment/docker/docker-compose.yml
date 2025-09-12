@@ -14,7 +14,7 @@ services:
       - SERVICE_TYPE=scheduler
       - DOWNLOAD_INTERVAL_MINUTES=${DOWNLOAD_INTERVAL_MINUTES:-10}
       - RETENTION_DAYS=${RETENTION_DAYS:-30}
-      - STREAMS=${STREAMS:-in_gate out_gate}
+      - STREAMS=${STREAMS:-in_gate}
       - DATABASE_URL=sqlite:////data/database.db
     volumes:
       - app_data:/data

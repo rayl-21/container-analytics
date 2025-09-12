@@ -455,7 +455,7 @@ class TestAnalytics:
                 dwell_time=3.0,
                 status='departed',
                 entry_camera_id='in_gate',
-                exit_camera_id='out_gate'
+                exit_camera_id='in_gate'
             ),
             Container(
                 container_number='APLU9876543',
