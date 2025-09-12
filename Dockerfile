@@ -339,7 +339,7 @@ case "$SERVICE_TYPE" in
     "scheduler")
         echo "Starting image download scheduler..."
         exec python -m modules.downloader.scheduler \
-            --streams ${STREAMS:-"in_gate out_gate"} \
+            --streams ${STREAMS:-"in_gate"} \
             --interval ${DOWNLOAD_INTERVAL_MINUTES:-10}
         ;;
     "detector")

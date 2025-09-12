@@ -425,6 +425,208 @@ class TestDrayDogDownloader:
 
             mock_cleanup.assert_called_once()
 
+    # Tests for refactored simplified API
+    
+    @patch("modules.downloader.selenium_client.webdriver.Chrome")
+    @patch("modules.downloader.selenium_client.WebDriverWait")
+    def test_get_timestamps_for_date(self, mock_wait_class, mock_chrome_class, temp_dir):
+        """Test the new get_timestamps_for_date method."""
+        mock_driver = Mock()
+        mock_chrome_class.return_value = mock_driver
+        mock_wait = Mock()
+        mock_wait_class.return_value = mock_wait
+        
+        # Mock date picker elements
+        mock_date_picker = Mock()
+        mock_date_input = Mock()
+        mock_wait.until.return_value = mock_date_picker
+        mock_driver.find_element.return_value = mock_date_input
+        
+        # Mock JavaScript execution returning timestamps
+        mock_driver.execute_script.return_value = [
+            "2025-09-01T10:07:34",
+            "2025-09-01T10:17:34",
+            "2025-09-01T10:27:34"
+        ]
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        timestamps = downloader.get_timestamps_for_date("2025-09-01", "in_gate")
+        
+        assert len(timestamps) == 3
+        assert all(ts.startswith("2025-09-01") for ts in timestamps)
+        assert timestamps[0] == "2025-09-01T10:07:34"
+        
+        # Verify URL includes date parameter
+        called_url = mock_driver.get.call_args[0][0]
+        assert "date=2025-09-01" in called_url
+        assert "streamName=in_gate" in called_url
+        
+        # Verify date picker was used
+        mock_date_picker.click.assert_called_once()
+        mock_date_input.clear.assert_called_once()
+
+    def test_generate_fallback_timestamps(self, temp_dir):
+        """Test fallback timestamp generation with common patterns."""
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        
+        timestamps = downloader._generate_fallback_timestamps("2025-09-01")
+        
+        # Should generate 144 timestamps (24 hours * 6 per hour)
+        assert len(timestamps) == 144
+        
+        # All should be for the correct date
+        assert all(ts.startswith("2025-09-01T") for ts in timestamps)
+        
+        # Check seconds pattern (should end with :07)
+        assert timestamps[0].endswith(":07")
+        assert timestamps[6].endswith(":07")  # Next hour
+
+    @patch("modules.downloader.selenium_client.requests.get")
+    def test_download_image_method(self, mock_requests, temp_dir):
+        """Test the simplified download_image method."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "image/jpeg"}
+        mock_response.content = b"fake image data"
+        mock_requests.return_value = mock_response
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        
+        url = "https://cdn.draydog.com/test.jpg"
+        filepath = str(temp_dir / "test.jpg")
+        
+        success = downloader.download_image(url, filepath)
+        
+        assert success is True
+        assert Path(filepath).exists()
+        assert Path(filepath).read_bytes() == b"fake image data"
+
+    @patch.object(DrayDogDownloader, "get_timestamps_for_date")
+    @patch.object(DrayDogDownloader, "download_image")
+    def test_download_images_for_date_simplified(
+        self, mock_download, mock_get_timestamps, temp_dir
+    ):
+        """Test the simplified download_images_for_date method."""
+        mock_get_timestamps.return_value = [
+            "2025-09-01T10:07:34",
+            "2025-09-01T10:17:34"
+        ]
+        mock_download.return_value = True
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        results = downloader.download_images_for_date("2025-09-01", "in_gate")
+        
+        assert len(results) == 2
+        assert mock_download.call_count == 2
+        
+        # Check date directory was created
+        date_dir = Path(temp_dir) / "2025-09-01"
+        assert date_dir.exists()
+        
+        # Check metadata file
+        metadata_file = date_dir / "download_metadata.json"
+        assert metadata_file.exists()
+        
+        metadata = json.loads(metadata_file.read_text())
+        assert metadata["date"] == "2025-09-01"
+        assert metadata["stream"] == "in_gate"
+        assert metadata["total_images"] == 2
+
+    @patch.object(DrayDogDownloader, "download_images_for_date")
+    def test_download_date_range(self, mock_download_for_date, temp_dir):
+        """Test the new download_date_range method."""
+        # Mock successful downloads for each date
+        mock_download_for_date.side_effect = [
+            ["/path/img1.jpg", "/path/img2.jpg"],  # 2025-09-01
+            ["/path/img3.jpg"],                      # 2025-09-02
+            ["/path/img4.jpg", "/path/img5.jpg"],    # 2025-09-03
+        ]
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        results = downloader.download_date_range("2025-09-01", "2025-09-03", "in_gate")
+        
+        assert len(results) == 3
+        assert "2025-09-01" in results
+        assert "2025-09-02" in results
+        assert "2025-09-03" in results
+        
+        assert len(results["2025-09-01"]) == 2
+        assert len(results["2025-09-02"]) == 1
+        assert len(results["2025-09-03"]) == 2
+        
+        # Verify correct number of calls
+        assert mock_download_for_date.call_count == 3
+
+    @patch.object(DrayDogDownloader, "get_timestamps_for_date")
+    @patch.object(DrayDogDownloader, "download_image")
+    def test_download_with_max_images(
+        self, mock_download, mock_get_timestamps, temp_dir
+    ):
+        """Test downloading with max_images limit."""
+        mock_get_timestamps.return_value = [
+            "2025-09-01T10:07:34",
+            "2025-09-01T10:17:34",
+            "2025-09-01T10:27:34",
+            "2025-09-01T10:37:34",
+            "2025-09-01T10:47:34"
+        ]
+        mock_download.return_value = True
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        results = downloader.download_images_for_date("2025-09-01", "in_gate", max_images=3)
+        
+        # Should only download 3 images despite 5 timestamps
+        assert len(results) == 3
+        assert mock_download.call_count == 3
+
+    @patch.object(DrayDogDownloader, "get_timestamps_for_date")
+    @patch.object(DrayDogDownloader, "download_image")
+    def test_download_tries_thumbnail_fallback(
+        self, mock_download, mock_get_timestamps, temp_dir
+    ):
+        """Test that thumbnail URL is tried as fallback."""
+        mock_get_timestamps.return_value = ["2025-09-01T10:07:34"]
+        
+        # First call (full image) fails, second (thumbnail) succeeds
+        mock_download.side_effect = [False, True]
+        
+        downloader = DrayDogDownloader(download_dir=str(temp_dir))
+        results = downloader.download_images_for_date("2025-09-01", "in_gate")
+        
+        # Should have tried both URLs
+        assert mock_download.call_count == 2
+        
+        # Check the URLs that were tried
+        calls = mock_download.call_args_list
+        full_url = calls[0][0][0]
+        thumbnail_url = calls[1][0][0]
+        
+        assert "-thumbnail" not in full_url
+        assert "-thumbnail" in thumbnail_url
+        
+        assert len(results) == 1
+
+    @patch("modules.downloader.selenium_client.webdriver.Chrome")
+    def test_timestamp_extraction_from_page_source(self, mock_chrome_class, temp_dir):
+        """Test fallback timestamp extraction from page source."""
+        mock_driver = Mock()
+        mock_chrome_class.return_value = mock_driver
+        
+        # JavaScript returns empty, but page source contains timestamps
+        mock_driver.execute_script.return_value = []
+        mock_driver.page_source = """
+            <img src="https://cdn.draydog.com/apm/2025-09-01/10/2025-09-01T10:07:34-in_gate.jpeg">
+            <img src="https://cdn.draydog.com/apm/2025-09-01/10/2025-09-01T10:17:34-in_gate.jpeg">
+        """
+        
+        with patch("modules.downloader.selenium_client.WebDriverWait"):
+            downloader = DrayDogDownloader(download_dir=str(temp_dir))
+            timestamps = downloader.get_timestamps_for_date("2025-09-01", "in_gate")
+        
+        assert len(timestamps) == 2
+        assert "2025-09-01T10:07:34" in timestamps
+        assert "2025-09-01T10:17:34" in timestamps
+
     def test_extract_timestamp_from_url(self, temp_dir):
         """Test timestamp extraction from DrayDog URLs."""
         downloader = DrayDogDownloader(download_dir=str(temp_dir))

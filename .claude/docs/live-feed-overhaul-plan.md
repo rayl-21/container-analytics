@@ -20,7 +20,7 @@ Complete overhaul of the Live Feed section with simplified UI and robust backend
 **Location**: `utils/bulk_download.py`
 **Tasks**:
 1. Create bulk download script for 2025-09-01 to 2025-09-07
-2. Download images from both in_gate and out_gate streams
+2. Download images from in_gate stream
 3. Organize images in `data/images/` by date and stream
 4. Save metadata to database (Image table)
 5. Add progress tracking and error handling
