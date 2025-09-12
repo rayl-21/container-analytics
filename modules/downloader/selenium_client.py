@@ -622,12 +622,23 @@ class DrayDogDownloader:
             url = image_info["url"]
             filename = image_info["filename"]
 
+            # Extract date from URL or filename to ensure proper folder structure
+            # URL pattern: https://cdn.draydog.com/apm/2025-09-01/23/2025-09-01T23:00:00-in_gate.jpeg
+            import re
+            date_match = re.search(r'/(\d{4}-\d{2}-\d{2})/', url)
+            if date_match:
+                date_part = date_match.group(1)
+            elif "T" in filename:
+                date_part = filename.split("T")[0]
+            else:
+                # Try to extract from the timestamp in filename
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+                if date_match:
+                    date_part = date_match.group(1)
+                else:
+                    date_part = datetime.now().strftime("%Y-%m-%d")
+            
             # Create subdirectory based on date
-            date_part = (
-                filename.split("T")[0]
-                if "T" in filename
-                else datetime.now().strftime("%Y-%m-%d")
-            )
             date_dir = os.path.join(self.download_dir, date_part)
             os.makedirs(date_dir, exist_ok=True)
 
@@ -940,7 +951,7 @@ class DrayDogDownloader:
         stream_name: str = "in_gate",
         max_images: Optional[int] = None,
         interval_minutes: int = 10,
-        use_actual_timestamps: bool = True,
+        use_actual_timestamps: bool = False,
     ) -> List[str]:
         """
         Download images directly using URL construction without Selenium.
@@ -1127,9 +1138,8 @@ class DrayDogDownloader:
         """
         Download images for a range of dates.
         
-        Since the Dray Dog UI doesn't change URL when navigating dates,
-        we maintain a single browser session and navigate through dates
-        using the date picker.
+        This method now uses direct URL construction for better reliability
+        and proper folder organization.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -1145,10 +1155,7 @@ class DrayDogDownloader:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
             
-            # Navigate to camera history once
-            logger.info(f"Navigating to camera history for stream: {stream_name}")
-            if not self.navigate_to_camera_history(stream_name):
-                raise RuntimeError("Failed to navigate to camera history")
+            logger.info(f"Downloading images from {start_date} to {end_date} for stream: {stream_name}")
             
             # Process each date in the range
             current_dt = start_dt
@@ -1156,39 +1163,22 @@ class DrayDogDownloader:
                 date_str = current_dt.strftime("%Y-%m-%d")
                 logger.info(f"Processing date: {date_str}")
                 
-                # Navigate to the specific date
-                if self._navigate_to_date(date_str):
-                    # Extract and download images
-                    image_data = self.extract_image_urls()
-                    
-                    if image_data:
-                        logger.info(f"Found {len(image_data)} images for {date_str}")
-                        downloaded_files = []
-                        
-                        for img_info in image_data:
-                            try:
-                                filepath = self.download_image(img_info)
-                                if filepath:
-                                    downloaded_files.append(filepath)
-                            except Exception as e:
-                                logger.error(f"Failed to download image: {e}")
-                                continue
-                        
-                        results[date_str] = downloaded_files
-                        logger.info(f"Downloaded {len(downloaded_files)} images for {date_str}")
-                    else:
-                        logger.warning(f"No images found for {date_str}")
-                        results[date_str] = []
-                else:
-                    logger.error(f"Failed to navigate to date: {date_str}")
-                    results[date_str] = []
+                # Use direct download method which creates proper folder structure
+                downloaded_files = self.download_images_direct(
+                    date_str=date_str,
+                    stream_name=stream_name,
+                    use_actual_timestamps=False  # Use predictable 10-minute intervals
+                )
+                
+                results[date_str] = downloaded_files
+                logger.info(f"Downloaded {len(downloaded_files)} images for {date_str}")
                 
                 # Move to next day
                 current_dt += timedelta(days=1)
                 
                 # Small delay between dates to avoid overwhelming the server
                 if current_dt <= end_dt:
-                    time.sleep(2)
+                    time.sleep(1)
 
             logger.info(f"Date range download completed. Processed {len(results)} dates.")
 
