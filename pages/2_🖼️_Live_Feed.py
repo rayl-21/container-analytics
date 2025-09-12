@@ -367,9 +367,11 @@ def main():
         available_dates = [date(2025, 9, d) for d in range(1, 8)]
         date_options = {d: d.strftime('%A, %B %d, %Y') for d in available_dates}
         
-        # If navigation date was selected, use it, otherwise default to Sept 1
+        # If navigation date was selected, use it, otherwise use session state or default
         if nav_date and nav_date in available_dates:
             default_index = available_dates.index(nav_date)
+        elif 'date_selector' in st.session_state and st.session_state.date_selector in available_dates:
+            default_index = available_dates.index(st.session_state.date_selector)
         else:
             default_index = 0
         
