@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Any
 from PIL import Image, ImageDraw, ImageFont
 import os
@@ -108,30 +108,39 @@ def load_actual_camera_image(camera_id: str = "CAM-01", detection_data: Optional
     
     return recent_images[0]['filepath']
 
-def load_7day_gallery() -> List[Dict[str, Any]]:
+def load_7day_gallery(selected_date: Optional[date] = None) -> List[Dict[str, Any]]:
     """
-    Load images from the last 7 days for gallery display.
+    Load images for a specific date or date range for gallery display.
+    
+    Args:
+        selected_date: Specific date to load images for. If None, loads all 7 days.
     
     Returns:
         List of image data dictionaries with detections
     """
     from datetime import date, timedelta
     
-    # Define the 7-day date range (last 7 days from today)
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)
+    # Define the fixed date range (2025-09-01 to 2025-09-07)
+    if selected_date:
+        # Load images for specific date
+        start_date = datetime.combine(selected_date, datetime.min.time())
+        end_date = datetime.combine(selected_date, datetime.max.time())
+    else:
+        # Load all 7 days
+        start_date = datetime(2025, 9, 1, 0, 0, 0)
+        end_date = datetime(2025, 9, 7, 23, 59, 59)
     
     gallery_images = []
     
     try:
         with session_scope() as session:
-            # Query images in date range, sorted by timestamp (newest first)
+            # Query images in date range, sorted by timestamp
             images = session.query(DBImage).filter(
                 and_(
                     DBImage.timestamp >= start_date,
                     DBImage.timestamp <= end_date
                 )
-            ).order_by(desc(DBImage.timestamp)).all()
+            ).order_by(DBImage.timestamp).all()
             
             for img in images:
                 # Get detections for this image
@@ -337,11 +346,43 @@ pass
 
 
 def main():
-    """Simplified Live Feed dashboard with 7-day image gallery."""
+    """Live Feed dashboard with date-based pagination for Sept 1-7, 2025."""
     
     # Header
     st.markdown("# 🖼️ Live Feed")
-    st.markdown("*Simple 7-day image gallery with detection overlays*")
+    st.markdown("*Image gallery with detection overlays - September 1-7, 2025*")
+    
+    # Date selector for pagination
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        # Date selector - limited to Sept 1-7, 2025
+        available_dates = [date(2025, 9, d) for d in range(1, 8)]
+        date_options = {d: d.strftime('%A, %B %d, %Y') for d in available_dates}
+        
+        selected_date = st.selectbox(
+            "📅 Select Date",
+            options=available_dates,
+            format_func=lambda x: date_options[x],
+            index=0,  # Default to Sept 1
+            key="date_selector"
+        )
+    
+    with col2:
+        # Quick navigation buttons
+        st.markdown("##### Quick Navigation")
+        button_cols = st.columns(7)
+        for i, (d, btn_col) in enumerate(zip(available_dates, button_cols)):
+            with btn_col:
+                if st.button(f"{d.day}", use_container_width=True, 
+                           type="primary" if d == selected_date else "secondary"):
+                    st.session_state.date_selector = d
+                    st.rerun()
+    
+    with col3:
+        # Show all toggle
+        show_all = st.toggle("Show All Days", value=False, 
+                           help="Display all images from Sept 1-7 (1000+ images)")
     
     # Sidebar - Clean and minimal
     with st.sidebar:
@@ -369,6 +410,13 @@ def main():
         st.subheader("🎯 Display Options")
         show_detections = st.toggle("Show Detection Overlays", value=True)
         
+        # Images per row selector
+        images_per_row = st.select_slider(
+            "Images per row",
+            options=[2, 3, 4, 5],
+            value=3
+        )
+        
         # Manual refresh
         if st.button("🔄 Refresh Gallery", use_container_width=True):
             st.cache_data.clear()
@@ -376,87 +424,133 @@ def main():
         
         st.divider()
         
+        # Statistics section
+        st.subheader("📈 Statistics")
+        
         # Navigation
+        st.divider()
         if st.button("🏠 Back to Dashboard", use_container_width=True):
             st.switch_page("app.py")
     
-    # Load 7-day image data (2025-09-01 to 2025-09-07)
-    with st.spinner("Loading image gallery..."):
+    # Load image data based on selection
+    with st.spinner("Loading images..."):
         try:
-            gallery_data = load_7day_gallery()
+            if show_all:
+                gallery_data = load_7day_gallery(None)  # Load all 7 days
+                date_display = "September 1-7, 2025"
+            else:
+                gallery_data = load_7day_gallery(selected_date)  # Load specific date
+                date_display = selected_date.strftime('%B %d, %Y')
         except Exception as e:
             st.error(f"Failed to load gallery data: {str(e)}")
             gallery_data = []
     
-    if not gallery_data:
-        st.info("📷 No images available for the selected date range (2025-09-01 to 2025-09-07)")
+    # Display image count and date
+    if gallery_data:
+        st.markdown(f"### 📸 {date_display}")
+        
+        # Show statistics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Images", len(gallery_data))
+        
+        with col2:
+            total_detections = sum(len(img.get('detections', [])) for img in gallery_data)
+            st.metric("Total Detections", total_detections)
+        
+        with col3:
+            # Count containers/trucks
+            total_containers = sum(
+                len([d for d in img.get('detections', []) 
+                     if d.get('object_type', '').lower() in ['truck', 'container']])
+                for img in gallery_data
+            )
+            st.metric("Containers/Trucks", total_containers)
+        
+        with col4:
+            # Images per hour
+            if gallery_data:
+                hours = len(set(img['timestamp'].hour for img in gallery_data))
+                st.metric("Hours Covered", hours)
+        
+        st.divider()
+        
+        # Image gallery
+        st.subheader("Image Gallery")
+        
+        # Progress bar for loading many images
+        if len(gallery_data) > 50:
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+        
+        # Display images in grid
+        total_images = len(gallery_data)
+        
+        for i in range(0, total_images, images_per_row):
+            cols = st.columns(images_per_row)
+            
+            for j, col in enumerate(cols):
+                idx = i + j
+                if idx < total_images:
+                    img_data = gallery_data[idx]
+                    
+                    with col:
+                        display_image_card(img_data, show_detections)
+                    
+                    # Update progress if showing many images
+                    if len(gallery_data) > 50:
+                        progress = (idx + 1) / total_images
+                        progress_bar.progress(progress)
+                        progress_text.text(f"Loading: {idx + 1}/{total_images} images")
+        
+        # Clear progress indicators
+        if len(gallery_data) > 50:
+            progress_bar.empty()
+            progress_text.empty()
+        
+        # Pagination controls at bottom
+        if not show_all:
+            st.divider()
+            
+            nav_cols = st.columns([1, 3, 1])
+            
+            with nav_cols[0]:
+                # Previous day button
+                current_idx = available_dates.index(selected_date)
+                if current_idx > 0:
+                    if st.button("⬅️ Previous Day", use_container_width=True):
+                        st.session_state.date_selector = available_dates[current_idx - 1]
+                        st.rerun()
+            
+            with nav_cols[1]:
+                st.markdown(f"<center>Day {current_idx + 1} of 7</center>", unsafe_allow_html=True)
+            
+            with nav_cols[2]:
+                # Next day button
+                if current_idx < len(available_dates) - 1:
+                    if st.button("Next Day ➡️", use_container_width=True):
+                        st.session_state.date_selector = available_dates[current_idx + 1]
+                        st.rerun()
+    
+    else:
+        st.info(f"📷 No images available for {date_display}")
         st.markdown("""
         The image gallery will show camera data when available. 
         
         **Tips:**
         - Enable "Pull New Data" to sync with cameras
         - Check that the camera service is running
-        - Verify images exist in the data/images directory
+        - Verify images exist in the database for this date range
+        - Images should be in data/images/2025-09-01 through 2025-09-07
         """)
-        return
     
-    # Display total image count and date range
-    st.markdown(f"**Showing {len(gallery_data)} images** from September 1-7, 2025")
-    
-    # Image gallery grid - 3 columns for optimal viewing
-    st.subheader("📸 Image Gallery")
-    
-    cols_per_row = 3
-    
-    # Group images by date for better organization
-    grouped_images = {}
-    for img_data in gallery_data:
-        img_date = img_data['timestamp'].strftime('%Y-%m-%d')
-        if img_date not in grouped_images:
-            grouped_images[img_date] = []
-        grouped_images[img_date].append(img_data)
-    
-    # Display images grouped by date
-    for date_str in sorted(grouped_images.keys(), reverse=True):  # Most recent first
-        date_images = grouped_images[date_str]
-        
-        # Date header
-        st.markdown(f"### 📅 {date_str} ({len(date_images)} images)")
-        
-        # Create image grid for this date
-        for i in range(0, len(date_images), cols_per_row):
-            cols = st.columns(cols_per_row)
-            
-            for j, col in enumerate(cols):
-                if i + j < len(date_images):
-                    img_data = date_images[i + j]
-                    
-                    with col:
-                        display_image_card(img_data, show_detections)
-        
-        st.divider()
-    
-    # Footer with summary stats
-    total_detections = sum(len(img_data.get('detections', [])) for img_data in gallery_data)
-    total_trucks = sum(
-        len([d for d in img_data.get('detections', []) if d.get('object_type', '').lower() in ['truck', 'container']])
-        for img_data in gallery_data
-    )
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Images", len(gallery_data))
-    
-    with col2:
-        st.metric("Total Detections", total_detections)
-    
-    with col3:
-        st.metric("Truck/Container Count", total_trucks)
-    
-    with col4:
-        date_range = "Sep 1-7, 2025"
-        st.metric("Date Range", date_range)
+    # Update sidebar statistics
+    if gallery_data:
+        with st.sidebar:
+            st.metric("Current View", f"{len(gallery_data)} images")
+            if not show_all:
+                st.caption(f"Date: {selected_date.strftime('%b %d, %Y')}")
 
 
 if __name__ == "__main__":
