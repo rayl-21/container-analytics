@@ -1,4 +1,118 @@
 """
+Container Analytics - Live Camera Feed
+
+This page shows the latest camera images with real-time detections,
+confidence scores, and container tracking information.
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+import time
+from PIL import Image, ImageDraw, ImageFont
+import io
+import base64
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from modules.database import queries
+from modules.database.models import session_scope, Container, Detection, Image as DBImage
+from modules.detection.yolo_detector import YOLODetector
+from modules.downloader.selenium_client import DrayDogDownloader
+import os
+import random
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from loguru import logger
+
+# Configure page
+st.set_page_config(
+    page_title="Live Feed - Container Analytics",
+    page_icon="🖼️",
+    layout="wide"
+)
+
+# Custom CSS for live feed styling
+st.markdown("""
+<style>
+.live-header {
+    font-size: 2.2rem;
+    font-weight: bold;
+    color: #1f77b4;
+    margin-bottom: 1rem;
+}
+
+.detection-card {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid #28a745;
+    margin: 0.5rem 0;
+}
+
+.detection-card.warning {
+    border-left-color: #ffc107;
+}
+
+.detection-card.error {
+    border-left-color: #dc3545;
+}
+
+.confidence-bar {
+    background-color: #e9ecef;
+    border-radius: 10px;
+    overflow: hidden;
+    height: 20px;
+    margin: 0.25rem 0;
+}
+
+.confidence-fill {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.live-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    background-color: #28a745;
+    border-radius: 50%;
+    animation: blink 2s infinite;
+    margin-right: 0.5rem;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0.3; }
+}
+
+.camera-feed {
+    border: 2px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background-color: #fff;
+}
+
+.tracking-info {
+    background-color: #e3f2fd;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    margin: 0.5rem 0;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+"""
 Container Analytics - Simplified Live Feed
 
 This page shows a clean 7-day image gallery (2025-09-01 to 2025-09-07)
@@ -67,6 +181,45 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# This function has been removed and replaced with load_7day_gallery()
+pass
+
+
+def load_actual_camera_image(camera_id: str = "CAM-01", detection_data: Optional[Dict] = None, images_list: Optional[List[Dict]] = None) -> Optional[str]:
+    """Load actual camera image from fetched images or database."""
+    # First try to use fetched images if available
+    if images_list:
+        # Map camera IDs to stream names
+        stream_map = {
+            "CAM-01": "in_gate",
+            "CAM-02": "out_gate",
+            "CAM-03": "in_gate",
+            "CAM-04": "out_gate"
+        }
+        
+        target_stream = stream_map.get(camera_id, "in_gate")
+        
+        # Find most recent image for the target stream
+        for img in images_list:
+            if img['stream'] == target_stream and os.path.exists(img['path']):
+                return img['path']
+    
+    # Fall back to database
+    recent_images = queries.get_recent_images(limit=1, camera_id=camera_id.lower().replace('cam-', '').replace('-', '_') + '_gate')
+    
+    if not recent_images:
+        # Fall back to any recent image
+        all_recent = queries.get_recent_images(limit=10)
+        if all_recent:
+            # Filter by camera type if possible
+            gate_images = [img for img in all_recent if 'gate' in img['filepath'].lower()]
+            if gate_images:
+                return gate_images[0]['filepath']
+            return all_recent[0]['filepath']
+        return None
+    
+    return recent_images[0]['filepath']
 
 def load_7day_gallery() -> List[Dict[str, Any]]:
     """
@@ -276,6 +429,22 @@ def add_detection_overlays(img: Image.Image, detections: List[Dict]) -> Image.Im
             continue  # Skip problematic detections
     
     return img
+
+
+# This function has been removed and replaced with display_image_card()
+pass
+
+
+# This function has been removed - detection info now shown in image cards
+pass
+
+
+# This function has been removed - camera status now shown in simplified sidebar
+pass
+
+
+# This function has been removed for simplified UI
+pass
 
 
 def main():

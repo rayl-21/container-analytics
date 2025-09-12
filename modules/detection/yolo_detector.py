@@ -274,6 +274,321 @@ class YOLODetector:
         )
         
         return results
+
+    def batch_process_images(
+        self,
+        limit: int = 100,
+        batch_size: int = 8,
+        save_to_database: bool = True,
+        update_container_tracking: bool = True,
+        enable_caching: bool = True
+    ) -> Dict[str, any]:
+        """
+        Process unprocessed images from database in batches with full pipeline integration.
+        
+        This method implements the complete detection pipeline:
+        1. Load unprocessed images from database using queries.py functions
+        2. Run YOLO detection in batches for efficiency
+        3. Save Detection records with bbox and confidence to database
+        4. Update Container tracking data (if OCR available)
+        5. Mark images as processed in database
+        6. Generate detection metrics and statistics
+        7. Cache results for performance
+        
+        Args:
+            limit: Maximum number of images to process
+            batch_size: Number of images to process simultaneously
+            save_to_database: Whether to persist results to database
+            update_container_tracking: Whether to update container tracking records
+            enable_caching: Whether to cache detection results
+            
+        Returns:
+            Dictionary containing processing statistics and results
+        """
+        from modules.database.queries import (
+            get_unprocessed_images, 
+            insert_detection, 
+            mark_image_processed,
+            update_container_tracking as update_container
+        )
+        
+        logger.info(f"Starting batch processing: limit={limit}, batch_size={batch_size}")
+        start_time = time.time()
+        
+        # Initialize statistics
+        stats = {
+            'total_images_requested': limit,
+            'total_images_found': 0,
+            'total_images_processed': 0,
+            'total_detections': 0,
+            'processing_time': 0,
+            'avg_time_per_image': 0,
+            'detection_breakdown': {},
+            'errors': [],
+            'cached_results': 0,
+            'database_saves': 0
+        }
+        
+        # Cache for detection results (if enabled)
+        detection_cache = {} if enable_caching else None
+        
+        try:
+            # 1. Load unprocessed images from database
+            unprocessed_images = get_unprocessed_images(limit=limit)
+            stats['total_images_found'] = len(unprocessed_images)
+            
+            if not unprocessed_images:
+                logger.info("No unprocessed images found in database")
+                return stats
+            
+            logger.info(f"Found {len(unprocessed_images)} unprocessed images")
+            
+            # Group images for batch processing
+            image_batches = []
+            for i in range(0, len(unprocessed_images), batch_size):
+                batch = unprocessed_images[i:i + batch_size]
+                image_batches.append(batch)
+            
+            # Process each batch
+            for batch_idx, image_batch in enumerate(image_batches):
+                logger.info(f"Processing batch {batch_idx + 1}/{len(image_batches)} ({len(image_batch)} images)")
+                
+                try:
+                    # Prepare batch data
+                    batch_paths = []
+                    batch_metadata = []
+                    valid_images = []
+                    
+                    for img_data in image_batch:
+                        image_path = Path(img_data['filepath'])
+                        
+                        # Check cache first
+                        if enable_caching and str(image_path) in detection_cache:
+                            logger.debug(f"Using cached result for {image_path.name}")
+                            stats['cached_results'] += 1
+                            continue
+                        
+                        # Verify image exists and is readable
+                        if image_path.exists():
+                            batch_paths.append(image_path)
+                            batch_metadata.append(img_data)
+                            valid_images.append(img_data)
+                        else:
+                            logger.warning(f"Image file not found: {image_path}")
+                            stats['errors'].append(f"File not found: {image_path}")
+                    
+                    if not batch_paths:
+                        continue
+                    
+                    # 2. Run YOLO detection on batch
+                    batch_results = self.detect_batch(
+                        image_paths=batch_paths,
+                        batch_size=len(batch_paths),
+                        return_annotated=False
+                    )
+                    
+                    # 3. Process results for each image
+                    for result, img_data in zip(batch_results, valid_images):
+                        try:
+                            detections = result['detections']
+                            metadata = result['metadata']
+                            image_id = img_data['id']
+                            image_path = Path(img_data['filepath'])
+                            
+                            # Cache result if enabled
+                            if enable_caching:
+                                detection_cache[str(image_path)] = {
+                                    'detections': detections,
+                                    'metadata': metadata,
+                                    'timestamp': time.time()
+                                }
+                            
+                            # 4. Save detection records to database
+                            if save_to_database and len(detections) > 0:
+                                detection_ids = []
+                                for i in range(len(detections)):
+                                    bbox = detections.xyxy[i]
+                                    confidence = detections.confidence[i]
+                                    class_id = detections.class_id[i]
+                                    
+                                    # Map class ID to object type
+                                    object_type = self.CONTAINER_CLASSES.get(int(class_id), 'unknown')
+                                    
+                                    # Prepare bbox dictionary
+                                    bbox_dict = {
+                                        'x': float(bbox[0]),
+                                        'y': float(bbox[1]),
+                                        'width': float(bbox[2] - bbox[0]),
+                                        'height': float(bbox[3] - bbox[1])
+                                    }
+                                    
+                                    # Save detection to database
+                                    detection_id = insert_detection(
+                                        image_id=image_id,
+                                        object_type=object_type,
+                                        confidence=float(confidence),
+                                        bbox=bbox_dict,
+                                        tracking_id=getattr(detections, 'tracker_id', [None])[i] if hasattr(detections, 'tracker_id') else None
+                                    )
+                                    detection_ids.append(detection_id)
+                                    stats['database_saves'] += 1
+                                
+                                logger.debug(f"Saved {len(detection_ids)} detections for image {image_id}")
+                            
+                            # 5. Update container tracking (if OCR module available)
+                            if update_container_tracking and len(detections) > 0:
+                                try:
+                                    # This is where OCR integration would happen
+                                    # For now, we'll skip container tracking without OCR
+                                    # In a full implementation, you'd call:
+                                    # container_numbers = extract_container_numbers(image_path, detections)
+                                    # for container_number in container_numbers:
+                                    #     update_container(container_number, img_data['timestamp'], 
+                                    #                    img_data['camera_id'], max_confidence)
+                                    pass
+                                except Exception as e:
+                                    logger.warning(f"Container tracking update failed: {e}")
+                                    stats['errors'].append(f"Container tracking error: {e}")
+                            
+                            # 6. Mark image as processed
+                            if save_to_database:
+                                mark_image_processed(image_id)
+                            
+                            # Update statistics
+                            stats['total_images_processed'] += 1
+                            stats['total_detections'] += len(detections)
+                            
+                            # Track detection breakdown
+                            for class_id in detections.class_id:
+                                object_type = self.CONTAINER_CLASSES.get(int(class_id), 'unknown')
+                                stats['detection_breakdown'][object_type] = stats['detection_breakdown'].get(object_type, 0) + 1
+                        
+                        except Exception as e:
+                            logger.error(f"Error processing image {img_data['id']}: {e}")
+                            stats['errors'].append(f"Image {img_data['id']}: {e}")
+                            continue
+                
+                except Exception as e:
+                    logger.error(f"Error processing batch {batch_idx + 1}: {e}")
+                    stats['errors'].append(f"Batch {batch_idx + 1}: {e}")
+                    continue
+            
+            # Calculate final statistics
+            stats['processing_time'] = time.time() - start_time
+            if stats['total_images_processed'] > 0:
+                stats['avg_time_per_image'] = stats['processing_time'] / stats['total_images_processed']
+            
+            # Log completion summary
+            logger.info(
+                f"Batch processing completed: {stats['total_images_processed']}/{stats['total_images_found']} images, "
+                f"{stats['total_detections']} detections, {stats['processing_time']:.2f}s total "
+                f"({stats['avg_time_per_image']:.3f}s per image)"
+            )
+            
+            # Log detection breakdown
+            if stats['detection_breakdown']:
+                breakdown_str = ", ".join([f"{obj}: {count}" for obj, count in stats['detection_breakdown'].items()])
+                logger.info(f"Detection breakdown: {breakdown_str}")
+            
+            if stats['errors']:
+                logger.warning(f"Processing completed with {len(stats['errors'])} errors")
+            
+            return stats
+        
+        except Exception as e:
+            logger.error(f"Fatal error in batch processing: {e}")
+            stats['errors'].append(f"Fatal error: {e}")
+            stats['processing_time'] = time.time() - start_time
+            raise
+    
+    def get_detection_statistics(self, days: int = 7) -> Dict[str, any]:
+        """
+        Generate detection statistics and aggregation data.
+        
+        Args:
+            days: Number of days to look back for statistics
+            
+        Returns:
+            Dictionary containing comprehensive detection statistics
+        """
+        from modules.database.queries import (
+            get_detection_summary,
+            get_container_statistics,
+            get_throughput_data,
+            get_recent_detections
+        )
+        from datetime import datetime, timedelta
+        
+        try:
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=days)
+            
+            stats = {
+                'period': {
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                    'days': days
+                },
+                'detection_summary': {},
+                'container_stats': {},
+                'throughput_data': {},
+                'recent_activity': {},
+                'performance_metrics': {
+                    'avg_detection_time': 0,
+                    'total_processing_time': sum(self.detection_times),
+                    'images_processed': len(self.detection_times),
+                    'detections_per_second': 0
+                }
+            }
+            
+            # Get detection summary
+            try:
+                stats['detection_summary'] = get_detection_summary(start_date, end_date)
+            except Exception as e:
+                logger.warning(f"Could not get detection summary: {e}")
+                stats['detection_summary'] = {}
+            
+            # Get container statistics
+            try:
+                stats['container_stats'] = get_container_statistics(start_date, end_date)
+            except Exception as e:
+                logger.warning(f"Could not get container statistics: {e}")
+                stats['container_stats'] = {}
+            
+            # Get throughput data
+            try:
+                stats['throughput_data'] = get_throughput_data(start_date, end_date)
+            except Exception as e:
+                logger.warning(f"Could not get throughput data: {e}")
+                stats['throughput_data'] = {}
+            
+            # Get recent activity
+            try:
+                stats['recent_activity'] = get_recent_detections(limit=50)
+            except Exception as e:
+                logger.warning(f"Could not get recent detections: {e}")
+                stats['recent_activity'] = {}
+            
+            # Calculate performance metrics
+            if self.detection_times:
+                stats['performance_metrics']['avg_detection_time'] = sum(self.detection_times) / len(self.detection_times)
+                if stats['performance_metrics']['total_processing_time'] > 0:
+                    stats['performance_metrics']['detections_per_second'] = len(self.detection_times) / stats['performance_metrics']['total_processing_time']
+            
+            return stats
+        
+        except Exception as e:
+            logger.error(f"Error generating detection statistics: {e}")
+            return {'error': str(e)}
+
+    def clear_detection_cache(self):
+        """Clear any cached detection results to free memory."""
+        # This would be implemented if we had a persistent cache
+        # For now, just reset detection times if they get too large
+        if len(self.detection_times) > 1000:
+            # Keep only the last 100 measurements for performance tracking
+            self.detection_times = self.detection_times[-100:]
+            logger.info("Cleared old detection time measurements")
     
     def _annotate_image(self, image: np.ndarray, detections: sv.Detections) -> Image.Image:
         """
