@@ -320,6 +320,18 @@ SERVICE_TYPE=${SERVICE_TYPE:-scheduler}
 # Ensure data directories exist
 mkdir -p /data/images /data/models /logs
 
+# Initialize database if it doesn't exist or is empty
+if [ ! -f /data/database.db ] || [ ! -s /data/database.db ]; then
+    echo "Initializing database..."
+    python -c "
+import sys
+sys.path.insert(0, '/app')
+from modules.database.models import init_database
+init_database()
+print('Database initialized successfully')
+" || echo "Warning: Database initialization failed, continuing..."
+fi
+
 echo "Starting Container Analytics service: $SERVICE_TYPE"
 
 case "$SERVICE_TYPE" in

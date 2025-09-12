@@ -185,11 +185,18 @@ tramp
 # ======================
 
 # Data directories
-data/images/*.jpg
-data/images/*.jpeg
-data/images/*.png
+data/images/**/*.jpg
+data/images/**/*.jpeg
+data/images/**/*.png
+data/images/**/*.metadata.json
 !data/images/.gitkeep
-data/database.db*
+data/database.db
+data/database.db-journal
+data/database.db-wal
+data/*.json
+data/.health_status
+data/.scheduler_health
+data/.detector_pid
 data/logs/
 data/backups/
 data/cache/
@@ -256,6 +263,8 @@ $RECYCLE.BIN/
 
 # Docker
 .dockerignore
+docker-compose.override.yml
+deployment/docker/.env
 
 # Local development
 .env.local
@@ -288,3 +297,31 @@ results/
 # requirements.lock
 # Pipfile.lock
 # poetry.lock
+
+# Serena MCP server
+.serena/cache/
+.serena/index/
+.serena/*.db
+
+# Playwright MCP
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Git worktrees
+.worktrees/
+
+# Claude settings (keep project settings, ignore local)
+.claude/settings.local.json
+
+# System files
+*.pid
+*.sock
+*.socket
+
+# Logs directory at root
+logs/
+
+# Docker volumes (when testing locally)
+volumes/
+docker-volumes/

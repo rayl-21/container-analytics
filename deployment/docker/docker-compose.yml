@@ -273,7 +273,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${DATA_DIR:-./data}
+      device: ${DATA_DIR:-/Users/rayli/Documents/container-analytics/data}
   app_logs:
     driver: local
   redis_data:
@@ -283,7 +283,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${MODELS_DIR:-./data/models}
+      device: ${MODELS_DIR:-/Users/rayli/Documents/container-analytics/data/models}
   loki_data:
     driver: local
   grafana_data:
