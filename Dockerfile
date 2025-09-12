@@ -35,19 +35,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chrome for Selenium
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# Install Chrome or Chromium for Selenium based on architecture
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list && \
+        apt-get update && \
+        apt-get install -y google-chrome-stable && \
+        rm -rf /var/lib/apt/lists/*; \
+    else \
+        apt-get update && \
+        apt-get install -y chromium chromium-driver && \
+        rm -rf /var/lib/apt/lists/* && \
+        ln -s /usr/bin/chromium /usr/bin/google-chrome-stable && \
+        ln -s /usr/bin/chromedriver /usr/local/bin/chromedriver; \
+    fi
 
-# Install ChromeDriver
-RUN CHROME_DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) \
-    && wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/$CHROME_DRIVER_VERSION/chromedriver_linux64.zip \
-    && unzip /tmp/chromedriver.zip chromedriver -d /usr/local/bin/ \
-    && rm /tmp/chromedriver.zip \
-    && chmod +x /usr/local/bin/chromedriver
+# Install ChromeDriver for amd64 architecture only
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        CHROME_DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) && \
+        wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/$CHROME_DRIVER_VERSION/chromedriver_linux64.zip && \
+        unzip /tmp/chromedriver.zip chromedriver -d /usr/local/bin/ && \
+        rm /tmp/chromedriver.zip && \
+        chmod +x /usr/local/bin/chromedriver; \
+    fi
 
 # Stage 2: Python dependencies builder
 FROM base-builder as python-builder
@@ -132,18 +144,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# Install Chrome or Chromium based on architecture
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list && \
+        apt-get update && \
+        apt-get install -y google-chrome-stable && \
+        rm -rf /var/lib/apt/lists/*; \
+    else \
+        apt-get update && \
+        apt-get install -y chromium chromium-driver && \
+        rm -rf /var/lib/apt/lists/* && \
+        ln -s /usr/bin/chromium /usr/bin/google-chrome-stable; \
+    fi
 
 # Copy virtual environment from builder
 COPY --from=python-builder /opt/venv /opt/venv
 
-# Copy ChromeDriver from builder
-COPY --from=base-builder /usr/local/bin/chromedriver /usr/local/bin/chromedriver
+# Copy ChromeDriver from builder (skip if using system chromium-driver)
+RUN if [ -f "/usr/local/bin/chromedriver" ]; then \
+        echo "Using system chromedriver"; \
+    else \
+        echo "ChromeDriver will be from chromium-driver package"; \
+    fi
 
 # Create application user for security
 RUN groupadd -r analytics && useradd -r -g analytics -u 1001 analytics \

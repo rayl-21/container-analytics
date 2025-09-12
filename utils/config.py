@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Union
 try:
-    from pydantic import validator, Field
+    from pydantic import field_validator, Field
     from pydantic_settings import BaseSettings
     PYDANTIC_AVAILABLE = True
 except ImportError:
@@ -34,8 +34,8 @@ except ImportError:
         """Fallback Field when pydantic is not available."""
         return kwargs.get('default', None)
     
-    def validator(*args, **kwargs):
-        """Fallback validator when pydantic is not available."""
+    def field_validator(*args, **kwargs):
+        """Fallback field_validator when pydantic is not available."""
         def decorator(func):
             return func
         return decorator
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     # OCR Configuration
     ocr_engine: str = Field(
         default="easyocr",
-        regex="^(easyocr|tesseract)$",
+        pattern="^(easyocr|tesseract)$",
         description="OCR engine to use (easyocr or tesseract)"
     )
     tesseract_cmd: Optional[Path] = Field(
@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     # Logging Configuration
     log_level: str = Field(
         default="INFO",
-        regex="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
+        pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
         description="Application log level"
     )
     log_file: Path = Field(
@@ -293,7 +293,7 @@ class Settings(BaseSettings):
     # Selenium Configuration
     selenium_driver: str = Field(
         default="chrome",
-        regex="^(chrome|firefox|safari|edge)$",
+        pattern="^(chrome|firefox|safari|edge)$",
         description="Selenium WebDriver to use"
     )
     selenium_headless: bool = Field(
@@ -363,7 +363,8 @@ class Settings(BaseSettings):
         description="Backup destination directory"
     )
     
-    @validator("image_storage_path", "yolo_model_path", "log_file", "backup_destination")
+    @field_validator("image_storage_path", "yolo_model_path", "log_file", "backup_destination")
+    @classmethod
     def ensure_path_exists(cls, v: Path) -> Path:
         """Ensure directory paths exist, create if necessary."""
         if isinstance(v, str):
@@ -377,19 +378,21 @@ class Settings(BaseSettings):
         
         return v
     
-    @validator("container_classes", "vehicle_classes", pre=True)
+    @field_validator("container_classes", "vehicle_classes", mode='before')
+    @classmethod
     def parse_comma_separated_list(cls, v: Union[str, List[str]]) -> List[str]:
         """Parse comma-separated strings into lists."""
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
     
-    @validator("draydog_username", "draydog_password")
-    def validate_required_for_production(cls, v: str, field) -> str:
+    @field_validator("draydog_username", "draydog_password")
+    @classmethod
+    def validate_required_for_production(cls, v: str, info) -> str:
         """Validate that required credentials are provided in production."""
         debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "true"
         if not debug_mode and not v:
-            raise ValueError(f"{field.name} is required in production mode")
+            raise ValueError(f"{info.field_name} is required in production mode")
         return v
     
     class Config:
