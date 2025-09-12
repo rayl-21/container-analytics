@@ -185,10 +185,7 @@ tramp
 # ======================
 
 # Data directories
-data/images/**/*.jpg
-data/images/**/*.jpeg
-data/images/**/*.png
-data/images/**/*.metadata.json
+data/images/
 !data/images/.gitkeep
 data/database.db
 data/database.db-journal
