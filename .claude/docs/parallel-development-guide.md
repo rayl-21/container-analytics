@@ -41,18 +41,100 @@ git worktree add .worktrees/feature-3 -b feature/branch-3
 git worktree list
 ```
 
-### 2. Project Structure with Worktrees
+### 2. Setup Worktree Environment
+Each worktree needs its own environment setup to maintain consistency:
+
+```bash
+# For each worktree, copy essential environment files
+for worktree in .worktrees/feature-*; do
+    echo "Setting up environment for $worktree"
+
+    # Copy Python virtual environment (symlink to save space)
+    ln -s "$(pwd)/venv" "$worktree/venv"
+
+    # Copy environment variables
+    cp .env "$worktree/.env"
+
+    # Copy or symlink data directory (depending on size)
+    # Option 1: Symlink (shares data between worktrees)
+    ln -s "$(pwd)/data" "$worktree/data"
+
+    # Option 2: Copy (isolates data per worktree)
+    # cp -r data "$worktree/data"
+
+    # Ensure gitignore is properly configured
+    echo "venv/" >> "$worktree/.gitignore"
+    echo ".env" >> "$worktree/.gitignore"
+    echo "data/" >> "$worktree/.gitignore"
+done
+```
+
+#### Alternative: Script-based Setup
+Create a setup script `.claude/scripts/setup-worktree.sh`:
+
+```bash
+#!/bin/bash
+# setup-worktree.sh - Prepare worktree with consistent environment
+
+WORKTREE_PATH=$1
+MAIN_REPO=$(git rev-parse --show-toplevel)
+
+if [ -z "$WORKTREE_PATH" ]; then
+    echo "Usage: setup-worktree.sh <worktree-path>"
+    exit 1
+fi
+
+echo "Setting up worktree: $WORKTREE_PATH"
+
+# Create symlinks for shared resources
+ln -sfn "$MAIN_REPO/venv" "$WORKTREE_PATH/venv"
+ln -sfn "$MAIN_REPO/data" "$WORKTREE_PATH/data"
+
+# Copy environment configuration
+cp "$MAIN_REPO/.env" "$WORKTREE_PATH/.env"
+
+# Activate virtual environment for the worktree
+echo "source venv/bin/activate" > "$WORKTREE_PATH/.autoenv"
+
+echo "✅ Worktree setup complete"
+```
+
+Usage:
+```bash
+# Create and setup new worktree
+git worktree add .worktrees/feature-new -b feature/new-feature
+./.claude/scripts/setup-worktree.sh .worktrees/feature-new
+```
+
+### 3. Project Structure with Worktrees
 ```
 container-analytics/
 ├── .git/                    # Main git directory
 ├── .worktrees/             # Parallel development branches
 │   ├── feature-1/          # Worktree for feature 1
+│   │   ├── venv/          # Symlink to main venv
+│   │   ├── data/          # Symlink to main data
+│   │   └── .env           # Copy of environment vars
 │   ├── feature-2/          # Worktree for feature 2
+│   │   ├── venv/          # Symlink to main venv
+│   │   ├── data/          # Symlink to main data
+│   │   └── .env           # Copy of environment vars
 │   └── feature-3/          # Worktree for feature 3
+│       ├── venv/          # Symlink to main venv
+│       ├── data/          # Symlink to main data
+│       └── .env           # Copy of environment vars
+├── venv/                   # Main virtual environment
+├── data/                   # Main data directory
 ├── modules/                # Main branch code
 ├── tests/
-└── ...
+└── .env                    # Main environment config
 ```
+
+#### Environment Consistency Notes
+- **Virtual Environment**: Symlinked to save disk space and ensure package consistency
+- **Data Directory**: Symlinked for shared access to models, images, and database
+- **.env File**: Copied to allow per-worktree configuration if needed
+- **Dependencies**: All worktrees use the same installed packages via symlinked venv
 
 ## Parallel Development Workflow
 
