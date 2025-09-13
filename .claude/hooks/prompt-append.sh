@@ -19,7 +19,8 @@ REMEMBER:
 3. Use playwright to understand browser and webpage, and convert the logic to Python. 
 4. Use virtual environment in venv/ for development. 
 5. Always prioritize executing code inline. 
-6. You can write your plans to .claude/docs/ folder."
+6. You can write your plans to .claude/docs/ folder if needed.
+7. Use context7 for most up-to-date documentation."
 
 # Create the modified prompt
 modified_prompt="${prompt}${APPEND_MESSAGE}"
