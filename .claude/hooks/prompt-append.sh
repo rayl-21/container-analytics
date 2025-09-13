@@ -12,7 +12,14 @@ print(data.get('prompt', ''))
 ")
 
 # Define your custom message to append
-APPEND_MESSAGE="REMEMBER: 1. Respect project structure and save files according to the project structure. 2. Use serena whenever possible. 3. Use playwright to understand browser and webpage, and convert the logic to Python. 4. Use virtual environment in @venv/ for development. 5. Always prefer executing code inline instead of writing to one-off scripts."
+APPEND_MESSAGE="
+REMEMBER: 
+1. Respect project structure and save files according to the project structure. 
+2. Use serena whenever possible. 
+3. Use playwright to understand browser and webpage, and convert the logic to Python. 
+4. Use virtual environment in venv/ for development. 
+5. Always prioritize executing code inline. 
+6. You can write your plans to .claude/docs/ folder."
 
 # Create the modified prompt
 modified_prompt="${prompt}${APPEND_MESSAGE}"
