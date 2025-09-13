@@ -5,11 +5,15 @@ This module provides YOLOv12-based object detection specifically optimized for
 detecting containers and vehicles in port gate camera images.
 
 Features:
-- Pre-trained YOLOv12 model with custom container/vehicle classes
+- YOLOv12 model support using standard ultralytics package
+- Pre-trained models with custom container/vehicle classes
 - Batch processing for efficiency
 - Configurable confidence thresholds
 - GPU acceleration support
 - Comprehensive logging and error handling
+- Database integration with full pipeline support
+- Watch mode for continuous processing
+- Performance tracking and statistics
 """
 
 import logging
@@ -40,9 +44,10 @@ logger = logging.getLogger(__name__)
 class YOLODetector:
     """
     YOLOv12-based object detector for containers and vehicles.
-    
-    This class wraps the ultralytics YOLO model and provides methods for
+
+    This class wraps the ultralytics YOLO model (YOLOv12) and provides methods for
     detecting objects in single images or batch processing multiple images.
+    Optimized specifically for YOLOv12 models for container detection.
     """
     
     # Define class mappings for container-relevant objects
@@ -63,10 +68,10 @@ class YOLODetector:
         verbose: bool = True
     ):
         """
-        Initialize the YOLO detector.
-        
+        Initialize the YOLOv12 detector.
+
         Args:
-            model_path: Path to YOLO model weights (default: yolov12x.pt)
+            model_path: Path to YOLOv12 model weights (default: yolov12x.pt)
             confidence_threshold: Minimum confidence score for detections
             iou_threshold: IoU threshold for Non-Maximum Suppression
             device: Device to run inference on ('cpu', 'cuda', or None for auto)
@@ -112,20 +117,21 @@ class YOLODetector:
             self.model.conf = self.confidence_threshold
             self.model.iou = self.iou_threshold
             
-            # Detect model version from filename
+            # Detect model version from filename - focus on YOLOv12
             model_name = Path(self.model_path).name
             if 'yolov12' in model_name.lower():
                 model_version = "YOLOv12"
-            elif 'yolov8' in model_name.lower():
-                model_version = "YOLOv8"
             elif 'yolo' in model_name.lower():
                 # Extract version number if present
                 import re
                 match = re.search(r'yolov?(\d+)', model_name.lower())
-                model_version = f"YOLOv{match.group(1)}" if match else "YOLO"
+                if match and match.group(1) == '12':
+                    model_version = "YOLOv12"
+                else:
+                    model_version = f"YOLOv{match.group(1)}" if match else "YOLO (assuming YOLOv12 compatible)"
             else:
-                model_version = "YOLO"
-            
+                model_version = "YOLO (assuming YOLOv12 compatible)"
+
             logger.info(f"Successfully loaded {model_version} model: {self.model_path}")
             
         except Exception as e:
