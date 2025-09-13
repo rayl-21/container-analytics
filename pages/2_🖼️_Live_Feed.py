@@ -202,8 +202,8 @@ def display_image_card(img_data: Dict[str, Any], show_detections: bool = True):
         # Calculate truck/container count
         detections = img_data.get('detections', [])
         truck_count = len([
-            d for d in detections 
-            if d.get('object_type', '').lower() in ['truck', 'container', 'vehicle']
+            d for d in detections
+            if d.get('object_type') and d.get('object_type').lower() in ['truck', 'container', 'vehicle']
         ])
         
         # Apply detection overlays if requested
@@ -244,7 +244,7 @@ def display_image_card(img_data: Dict[str, Any], show_detections: bool = True):
             with st.expander("Detection Details", expanded=True):
                 for i, detection in enumerate(detections):
                     confidence = detection.get('confidence', 0)
-                    obj_type = detection.get('object_type', 'Unknown')
+                    obj_type = detection.get('object_type') or 'Unknown'
                     st.write(f"**{i+1}.** {obj_type.title()} ({confidence:.1%})")
     
     except Exception as e:
@@ -299,7 +299,7 @@ def add_detection_overlays(img: Image.Image, detections: List[Dict]) -> Image.Im
                 continue  # Skip invalid boxes
             
             # Get object type and color
-            obj_type = detection.get('object_type', 'unknown').lower()
+            obj_type = (detection.get('object_type') or 'unknown').lower()
             color = colors.get(obj_type, colors['default'])
             
             # Draw bounding box
@@ -468,8 +468,8 @@ def main():
         with col3:
             # Count containers/trucks
             total_containers = sum(
-                len([d for d in img.get('detections', []) 
-                     if d.get('object_type', '').lower() in ['truck', 'container']])
+                len([d for d in img.get('detections', [])
+                     if d.get('object_type') and d.get('object_type').lower() in ['truck', 'container']])
                 for img in gallery_data
             )
             st.metric("Containers/Trucks", total_containers)

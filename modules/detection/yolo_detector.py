@@ -478,7 +478,8 @@ class YOLODetector:
                     camera_id = self._extract_camera_id_from_path(image_path)
                     
                     image_record = ImageModel(
-                        filepath=str(image_path),
+                        image_path=str(image_path),  # Set required image_path field
+                        filepath=str(image_path),    # Keep for backward compatibility
                         camera_id=camera_id,
                         processed=True,
                         file_size=file_size
