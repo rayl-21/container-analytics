@@ -156,7 +156,7 @@ def load_7day_gallery(selected_date: Optional[date] = None) -> List[Dict[str, An
                         'object_type': det.object_type,
                         'confidence': det.confidence,
                         'bbox': det.bbox,
-                        'tracking_id': det.tracking_id,
+                        'tracking_id': det.track_id,
                         'container_number': getattr(det, 'container_number', None)
                     }
                     detection_data.append(det_dict)
