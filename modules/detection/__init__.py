@@ -1,27 +1,20 @@
 """
 Detection Module for Container Analytics
 
-This module provides computer vision capabilities for container detection,
-tracking, and OCR functionality.
+This module provides computer vision capabilities for container detection.
 
 Components:
 - YOLODetector: YOLOv12-based object detection for containers and vehicles
-- ContainerTracker: ByteTrack-based object tracking with dwell time calculation
-- ContainerOCR: OCR for extracting container numbers from detected containers
 
 Usage:
-    from modules.detection import YOLODetector, ContainerTracker, ContainerOCR
-    
+    from modules.detection import YOLODetector
+
     detector = YOLODetector()
-    tracker = ContainerTracker()
-    ocr = ContainerOCR()
 """
 
 from .yolo_detector import YOLODetector
-from .tracker import ContainerTracker
-from .ocr import ContainerOCR
 
-__all__ = ["YOLODetector", "ContainerTracker", "ContainerOCR"]
+__all__ = ["YOLODetector"]
 
 # Version information
 __version__ = "1.0.0"
