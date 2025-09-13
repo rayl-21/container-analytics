@@ -21,9 +21,8 @@ Container Analytics - A Python-based MVP application that automatically download
 - **Deployment Configs**: systemd service and Docker compose for production
 
 ### In Progress 🔄
-- **Detection Module**: YOLOv12 integration with container tracking
+- **Detection Module**: YOLOv12 integration for object detection
 - **Streamlit Dashboard**: Multi-page application with real-time updates
-- **Container OCR**: Number recognition system for container IDs
 
 ## Technology Stack
 
@@ -58,9 +57,7 @@ container-analytics/
 │   │   ├── selenium_client.py  # Selenium WebDriver automation
 │   │   └── scheduler.py        # APScheduler for automated downloads
 │   ├── detection/              # Computer vision module
-│   │   ├── yolo_detector.py    # YOLOv12 implementation
-│   │   ├── tracker.py          # Multi-object tracking
-│   │   └── ocr.py              # Container number OCR
+│   │   └── yolo_detector.py    # YOLOv12 implementation
 │   ├── analytics/              # Analytics engine
 │   │   ├── metrics.py          # KPI calculations
 │   │   ├── aggregator.py       # Data aggregation
@@ -188,7 +185,7 @@ class ContainerDetector:
 ### Database Models
 - **Image**: Camera image metadata with timestamps
 - **Detection**: YOLO detection results with bounding boxes
-- **Container**: Container tracking data with IDs
+- **Container**: Container detection data
 - **Metric**: Aggregated analytics and KPIs
 
 All models use proper indexes for performance and foreign key constraints for data integrity.

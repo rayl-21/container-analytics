@@ -1,16 +1,12 @@
 """
-Integrated Detection System for Container Analytics
+Simplified Detection System for Container Analytics
 
-This module combines YOLO detection, OCR text recognition, and multi-object tracking
-to provide a complete container identification and tracking solution.
+This module provides YOLO-based container detection with database integration.
 
 Features:
 - Container detection using YOLOv12
-- Container number extraction using OCR
-- Multi-object tracking with ByteTrack
-- Movement detection for IN/OUT gates
-- Container lifecycle management
 - Database integration for persistence
+- Performance monitoring and analytics
 """
 
 import logging
@@ -25,8 +21,6 @@ from sqlalchemy.orm import Session
 from dataclasses import dataclass
 
 from .yolo_detector import YOLODetector
-from .ocr import ContainerOCR
-from .tracker import ContainerTracker, TrackInfo
 from ..database.models import Image, Detection, Container, session_scope
 from ..database.queries import DatabaseQueries
 
@@ -36,104 +30,56 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ContainerEvent:
-    """Container movement event data."""
-    container_number: str
-    track_id: int
-    event_type: str  # 'entry', 'exit', 'movement'
-    camera_id: str
-    timestamp: datetime
-    confidence: float
-    bbox: Tuple[float, float, float, float]
-    ocr_confidence: float
-
-
-@dataclass
 class DetectionResult:
-    """Complete detection result including tracking and OCR."""
+    """Detection result from YOLO processing."""
     timestamp: datetime
     image_path: str
     camera_id: str
     detections: sv.Detections
-    tracked_detections: sv.Detections
-    ocr_results: List[Dict]
-    container_events: List[ContainerEvent]
     processing_time: float
 
 
-class IntegratedContainerDetector:
+class SimplifiedContainerDetector:
     """
-    Integrated container detection system combining YOLO, OCR, and tracking.
-    
-    This class provides a complete solution for container identification,
-    tracking, and lifecycle management across multiple camera feeds.
+    Simplified container detection system using YOLO.
+
+    This class provides container detection using YOLOv12 with database integration
+    for storage and analytics.
     """
     
     def __init__(
         self,
         yolo_model_path: str = "data/models/yolov12x.pt",
         yolo_confidence: float = 0.25,
-        ocr_confidence: float = 0.5,
-        track_thresh: float = 0.25,
-        track_buffer: int = 30,
-        match_thresh: float = 0.8,
-        use_gpu: bool = True,
-        max_track_age: int = 600  # 10 minutes
+        use_gpu: bool = True
     ):
         """
-        Initialize the integrated detection system.
-        
+        Initialize the simplified detection system.
+
         Args:
             yolo_model_path: Path to YOLO model weights
             yolo_confidence: Minimum confidence for YOLO detections
-            ocr_confidence: Minimum confidence for OCR results
-            track_thresh: Threshold for track activation
-            track_buffer: Buffer size for lost tracks
-            match_thresh: Matching threshold for track association
             use_gpu: Whether to use GPU acceleration
-            max_track_age: Maximum age of inactive tracks in seconds
         """
         self.yolo_confidence = yolo_confidence
-        self.ocr_confidence = ocr_confidence
         self.use_gpu = use_gpu
-        self.max_track_age = max_track_age
-        
-        # Initialize components
+
+        # Initialize YOLO detector
         logger.info("Initializing YOLO detector...")
         self.yolo_detector = YOLODetector(
             model_path=yolo_model_path,
             confidence_threshold=yolo_confidence,
             device="cuda" if use_gpu else "cpu"
         )
-        
-        logger.info("Initializing OCR engine...")
-        self.ocr_engine = ContainerOCR(
-            use_easyocr=True,
-            use_tesseract=True,
-            easyocr_gpu=use_gpu
-        )
-        
-        logger.info("Initializing container tracker...")
-        self.tracker = ContainerTracker(
-            track_thresh=track_thresh,
-            track_buffer=track_buffer,
-            match_thresh=match_thresh,
-            max_track_age=max_track_age
-        )
-        
+
         # Database queries helper
         self.db_queries = DatabaseQueries()
-        
-        # Container management
-        self.known_containers: Dict[str, Dict] = {}  # container_number -> info
-        self.track_to_container: Dict[int, str] = {}  # track_id -> container_number
-        
+
         # Performance tracking
         self.processing_times = []
         self.total_detections = 0
-        self.total_containers_identified = 0
-        
-        logger.info("Integrated container detector initialized successfully")
+
+        logger.info("Simplified container detector initialized successfully")
     
     def process_image(
         self,
@@ -143,16 +89,16 @@ class IntegratedContainerDetector:
         save_to_db: bool = True
     ) -> DetectionResult:
         """
-        Process a single image through the complete detection pipeline.
-        
+        Process a single image through YOLO detection.
+
         Args:
             image_path: Path to input image
             camera_id: Identifier for the camera/stream
             timestamp: Image timestamp (default: current time)
             save_to_db: Whether to save results to database
-            
+
         Returns:
-            DetectionResult with all processing information
+            DetectionResult with detection information
         """
         start_time = time.time()
         
@@ -163,58 +109,32 @@ class IntegratedContainerDetector:
         logger.debug(f"Processing image: {Path(image_path).name} from camera: {camera_id}")
         
         try:
-            # 1. YOLO Detection
+            # YOLO Detection
             yolo_result = self.yolo_detector.detect_single_image(image_path)
             detections = yolo_result["detections"]
-            
-            # 2. Multi-object tracking
-            tracked_detections = self.tracker.update(detections, timestamp)
-            
-            # 3. OCR on tracked containers
-            ocr_results = []
-            if len(tracked_detections) > 0:
-                ocr_results = self.ocr_engine.extract_container_numbers(
-                    image_path,
-                    tracked_detections,
-                    min_confidence=self.ocr_confidence
-                )
-            
-            # 4. Process container events and lifecycle
-            container_events = self._process_container_events(
-                tracked_detections, ocr_results, camera_id, timestamp
-            )
-            
-            # 5. Save to database if requested
+
+            # Save to database if requested
             if save_to_db:
                 self._save_to_database(
-                    image_path, camera_id, timestamp,
-                    detections, tracked_detections, ocr_results, container_events
+                    image_path, camera_id, timestamp, detections
                 )
-            
+
             # Calculate processing time
             processing_time = time.time() - start_time
             self.processing_times.append(processing_time)
-            
+
             # Update statistics
             self.total_detections += len(detections)
-            self.total_containers_identified += len([
-                event for event in container_events 
-                if event.event_type == 'entry'
-            ])
-            
+
             logger.info(f"Processed {Path(image_path).name}: "
-                       f"{len(detections)} detections, {len(tracked_detections)} tracked, "
-                       f"{len(ocr_results)} OCR results, {len(container_events)} events "
+                       f"{len(detections)} detections "
                        f"in {processing_time:.3f}s")
-            
+
             return DetectionResult(
                 timestamp=timestamp,
                 image_path=image_path,
                 camera_id=camera_id,
                 detections=detections,
-                tracked_detections=tracked_detections,
-                ocr_results=ocr_results,
-                container_events=container_events,
                 processing_time=processing_time
             )
             
@@ -222,154 +142,22 @@ class IntegratedContainerDetector:
             logger.error(f"Error processing image {image_path}: {e}")
             raise
     
-    def _process_container_events(
-        self,
-        tracked_detections: sv.Detections,
-        ocr_results: List[Dict],
-        camera_id: str,
-        timestamp: datetime
-    ) -> List[ContainerEvent]:
-        """
-        Process container events based on tracking and OCR results.
-        
-        Args:
-            tracked_detections: Detections with track IDs
-            ocr_results: OCR results from detection regions
-            camera_id: Camera identifier
-            timestamp: Current timestamp
-            
-        Returns:
-            List of container events
-        """
-        events = []
-        
-        # Map OCR results to track IDs
-        track_ocr_map = {}
-        for ocr_result in ocr_results:
-            if "detection_index" in ocr_result and ocr_result.get("is_container_number", False):
-                detection_idx = ocr_result["detection_index"]
-                if detection_idx < len(tracked_detections.tracker_id):
-                    track_id = tracked_detections.tracker_id[detection_idx]
-                    if track_id != -1:  # Valid track ID
-                        container_number = ocr_result["formatted_number"]
-                        track_ocr_map[track_id] = {
-                            "container_number": container_number,
-                            "confidence": ocr_result["confidence"]
-                        }
-        
-        # Process each tracked detection
-        if tracked_detections.tracker_id is not None:
-            for i, track_id in enumerate(tracked_detections.tracker_id):
-                if track_id == -1:
-                    continue
-                
-                bbox = tuple(tracked_detections.xyxy[i])
-                confidence = float(tracked_detections.confidence[i]) if tracked_detections.confidence is not None else 1.0
-                
-                # Check if we have OCR for this track
-                ocr_info = track_ocr_map.get(track_id)
-                
-                if ocr_info:
-                    container_number = ocr_info["container_number"]
-                    ocr_confidence = ocr_info["confidence"]
-                    
-                    # Check if this is a new container
-                    if track_id not in self.track_to_container:
-                        # New container detected
-                        self.track_to_container[track_id] = container_number
-                        
-                        if container_number not in self.known_containers:
-                            # First time seeing this container
-                            self.known_containers[container_number] = {
-                                "first_seen": timestamp,
-                                "last_seen": timestamp,
-                                "cameras": {camera_id},
-                                "track_ids": {track_id},
-                                "status": "active"
-                            }
-                            
-                            event_type = self._determine_event_type(camera_id, "entry")
-                            events.append(ContainerEvent(
-                                container_number=container_number,
-                                track_id=track_id,
-                                event_type=event_type,
-                                camera_id=camera_id,
-                                timestamp=timestamp,
-                                confidence=confidence,
-                                bbox=bbox,
-                                ocr_confidence=ocr_confidence
-                            ))
-                        else:
-                            # Container seen before, update info
-                            container_info = self.known_containers[container_number]
-                            container_info["last_seen"] = timestamp
-                            container_info["cameras"].add(camera_id)
-                            container_info["track_ids"].add(track_id)
-                            
-                            # Check for movement between cameras
-                            if len(container_info["cameras"]) > 1:
-                                event_type = self._determine_event_type(camera_id, "movement")
-                                events.append(ContainerEvent(
-                                    container_number=container_number,
-                                    track_id=track_id,
-                                    event_type=event_type,
-                                    camera_id=camera_id,
-                                    timestamp=timestamp,
-                                    confidence=confidence,
-                                    bbox=bbox,
-                                    ocr_confidence=ocr_confidence
-                                ))
-                    else:
-                        # Update existing tracking
-                        container_number = self.track_to_container[track_id]
-                        if container_number in self.known_containers:
-                            container_info = self.known_containers[container_number]
-                            container_info["last_seen"] = timestamp
-                            container_info["cameras"].add(camera_id)
-        
-        return events
-    
-    def _determine_event_type(self, camera_id: str, default: str) -> str:
-        """
-        Determine the type of container event based on camera ID.
-        
-        Args:
-            camera_id: Camera identifier
-            default: Default event type
-            
-        Returns:
-            Event type string
-        """
-        camera_lower = camera_id.lower()
-        
-        if "in" in camera_lower or "entry" in camera_lower or "gate_in" in camera_lower:
-            return "entry"
-        elif "out" in camera_lower or "exit" in camera_lower or "gate_out" in camera_lower:
-            return "exit"
-        else:
-            return default
     
     def _save_to_database(
         self,
         image_path: str,
         camera_id: str,
         timestamp: datetime,
-        detections: sv.Detections,
-        tracked_detections: sv.Detections,
-        ocr_results: List[Dict],
-        container_events: List[ContainerEvent]
+        detections: sv.Detections
     ) -> None:
         """
         Save detection results to database.
-        
+
         Args:
             image_path: Path to processed image
             camera_id: Camera identifier
             timestamp: Processing timestamp
-            detections: Original YOLO detections
-            tracked_detections: Tracked detections
-            ocr_results: OCR results
-            container_events: Container events
+            detections: YOLO detections
         """
         try:
             with session_scope() as session:
@@ -385,16 +173,12 @@ class IntegratedContainerDetector:
                 session.flush()  # Get the image ID
                 
                 # Save detections
-                if len(tracked_detections) > 0:
-                    for i in range(len(tracked_detections)):
-                        bbox = tracked_detections.xyxy[i]
-                        confidence = float(tracked_detections.confidence[i]) if tracked_detections.confidence is not None else 1.0
-                        class_id = int(tracked_detections.class_id[i]) if tracked_detections.class_id is not None else 0
-                        track_id = int(tracked_detections.tracker_id[i]) if tracked_detections.tracker_id is not None else None
-                        
-                        if track_id == -1:
-                            track_id = None
-                        
+                if len(detections) > 0:
+                    for i in range(len(detections)):
+                        bbox = detections.xyxy[i]
+                        confidence = float(detections.confidence[i]) if detections.confidence is not None else 1.0
+                        class_id = int(detections.class_id[i]) if detections.class_id is not None else 0
+
                         detection_record = Detection(
                             image_id=image_record.id,
                             x1=float(bbox[0]),
@@ -403,50 +187,13 @@ class IntegratedContainerDetector:
                             y2=float(bbox[3]),
                             confidence=confidence,
                             class_id=class_id,
-                            track_id=track_id,
+                            track_id=None,  # No tracking in simplified version
                             timestamp=timestamp
                         )
                         session.add(detection_record)
                 
-                # Save/update containers
-                for event in container_events:
-                    if event.event_type == "entry":
-                        # Create or update container record
-                        container = session.query(Container).filter_by(
-                            container_number=event.container_number
-                        ).first()
-                        
-                        if container:
-                            # Update existing container
-                            container.last_seen = timestamp
-                            container.total_detections += 1
-                            container.calculate_dwell_time()
-                            if event.camera_id and not container.camera_id:
-                                container.camera_id = event.camera_id
-                        else:
-                            # Create new container record
-                            container = Container(
-                                container_number=event.container_number,
-                                first_seen=timestamp,
-                                last_seen=timestamp,
-                                total_detections=1,
-                                avg_confidence=event.ocr_confidence,
-                                status="active",
-                                camera_id=event.camera_id
-                            )
-                            container.calculate_dwell_time()
-                            session.add(container)
-                    
-                    elif event.event_type == "exit":
-                        # Mark container as departed
-                        container = session.query(Container).filter_by(
-                            container_number=event.container_number
-                        ).first()
-                        
-                        if container:
-                            container.last_seen = timestamp
-                            container.status = "departed"
-                            container.calculate_dwell_time()
+                # Note: Container records would be created by separate OCR processing
+                # This simplified version only stores raw detections
                 
                 session.commit()
                 
@@ -493,9 +240,6 @@ class IntegratedContainerDetector:
                     image_path=str(image_path),
                     camera_id=camera_id,
                     detections=sv.Detections.empty(),
-                    tracked_detections=sv.Detections.empty(),
-                    ocr_results=[],
-                    container_events=[],
                     processing_time=0.0
                 ))
         
@@ -567,38 +311,33 @@ class IntegratedContainerDetector:
     def get_performance_stats(self) -> Dict:
         """
         Get system performance statistics.
-        
+
         Returns:
             Dictionary with performance metrics
         """
         yolo_stats = self.yolo_detector.get_performance_stats() if hasattr(self.yolo_detector, 'get_performance_stats') else {}
-        ocr_stats = self.ocr_engine.get_performance_stats()
-        tracker_stats = self.tracker.get_performance_stats()
-        
-        integrated_stats = {
+
+        simplified_stats = {
             "total_images_processed": len(self.processing_times),
             "total_detections": self.total_detections,
-            "total_containers_identified": self.total_containers_identified,
             "avg_processing_time": np.mean(self.processing_times) if self.processing_times else 0,
             "processing_fps": 1.0 / np.mean(self.processing_times) if self.processing_times else 0,
         }
-        
+
         return {
-            "integrated": integrated_stats,
-            "yolo": yolo_stats,
-            "ocr": ocr_stats,
-            "tracker": tracker_stats
+            "simplified": simplified_stats,
+            "yolo": yolo_stats
         }
     
-    def reset_tracker(self) -> None:
-        """Reset the tracking system."""
-        self.tracker.reset()
-        self.track_to_container.clear()
-        logger.info("Tracker reset completed")
+    def reset_stats(self) -> None:
+        """Reset performance statistics."""
+        self.processing_times.clear()
+        self.total_detections = 0
+        logger.info("Statistics reset completed")
     
     def shutdown(self) -> None:
         """Cleanup and shutdown the detection system."""
-        logger.info("Shutting down integrated detection system...")
+        logger.info("Shutting down simplified detection system...")
         # Cleanup if needed
         logger.info("Shutdown completed")
 
@@ -607,7 +346,7 @@ class IntegratedContainerDetector:
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Integrated Container Detection Test")
+    parser = argparse.ArgumentParser(description="Simplified Container Detection Test")
     parser.add_argument("--image", type=str, help="Path to single image")
     parser.add_argument("--directory", type=str, help="Path to directory with images")
     parser.add_argument("--camera-id", type=str, default="test_camera", help="Camera ID")
@@ -622,7 +361,7 @@ if __name__ == "__main__":
         exit(1)
     
     # Initialize detector
-    detector = IntegratedContainerDetector(
+    detector = SimplifiedContainerDetector(
         yolo_model_path=args.model,
         yolo_confidence=args.confidence
     )
@@ -638,14 +377,7 @@ if __name__ == "__main__":
             
             print(f"Processed {Path(args.image).name}:")
             print(f"  Detections: {len(result.detections)}")
-            print(f"  Tracked objects: {len(result.tracked_detections)}")
-            print(f"  OCR results: {len(result.ocr_results)}")
-            print(f"  Container events: {len(result.container_events)}")
             print(f"  Processing time: {result.processing_time:.3f}s")
-            
-            for event in result.container_events:
-                print(f"  Event: {event.event_type} - {event.container_number} "
-                      f"(confidence: {event.ocr_confidence:.2f})")
         
         elif args.directory:
             # Process directory
@@ -660,14 +392,13 @@ if __name__ == "__main__":
             
             print(f"Processed {len(results)} images:")
             
-            total_containers = 0
+            total_detections = 0
             for i, result in enumerate(results):
-                total_containers += len(result.container_events)
+                total_detections += len(result.detections)
                 print(f"  {Path(result.image_path).name}: "
-                      f"{len(result.detections)} detections, "
-                      f"{len(result.container_events)} events")
-            
-            print(f"Total container events: {total_containers}")
+                      f"{len(result.detections)} detections")
+
+            print(f"Total detections: {total_detections}")
         
         # Print performance stats
         print("\nPerformance Statistics:")
