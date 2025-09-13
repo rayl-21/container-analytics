@@ -41,6 +41,112 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def patch_yolov12_aattn():
+    """
+    Patch the ultralytics library to fix YOLOv12 AAttn attribute error.
+    
+    YOLOv12 uses separate qk and v convolutions instead of combined qkv.
+    This patch fixes the 'AAttn' object has no attribute 'qkv' error.
+    """
+    try:
+        import torch
+        import torch.nn as nn
+        from ultralytics.nn.modules import Conv
+        import ultralytics.nn.modules.block as block_module
+        
+        # Check if flash attention is available
+        USE_FLASH_ATTN = False
+        try:
+            from flash_attn import flash_attn_func
+            USE_FLASH_ATTN = True
+        except ImportError:
+            pass
+        
+        class AAttnV12(nn.Module):
+            """YOLOv12 Area-attention module with fixed qk/v split."""
+            
+            def __init__(self, dim, num_heads, area=1):
+                """Initialize the YOLOv12 area-attention module."""
+                super().__init__()
+                self.area = area
+                self.num_heads = num_heads
+                self.head_dim = head_dim = dim // num_heads
+                all_head_dim = head_dim * self.num_heads
+                
+                # YOLOv12 uses separate qk and v instead of combined qkv
+                self.qk = Conv(dim, all_head_dim * 2, 1, act=False)
+                self.v = Conv(dim, all_head_dim, 1, act=False)
+                self.proj = Conv(all_head_dim, dim, 1, act=False)
+                
+                # Positional encoding with group convolution
+                self.pe = Conv(all_head_dim, dim, 5, 1, 2, g=dim, act=False)
+            
+            def forward(self, x):
+                """Forward pass of the YOLOv12 area attention module."""
+                B, C, H, W = x.shape
+                N = H * W
+                
+                # Get qk and v using separate convolutions
+                qk = self.qk(x).flatten(2).transpose(1, 2)
+                v = self.v(x)
+                pp = self.pe(v)  # Positional encoding
+                v = v.flatten(2).transpose(1, 2)
+                
+                # Handle area-based attention
+                if self.area > 1:
+                    qk = qk.reshape(B * self.area, N // self.area, C * 2)
+                    v = v.reshape(B * self.area, N // self.area, C)
+                    B, N, _ = qk.shape
+                
+                # Split q and k
+                q, k = qk.split([C, C], dim=2)
+                
+                # Check if CUDA and flash attention available
+                if x.is_cuda and USE_FLASH_ATTN:
+                    q = q.view(B, N, self.num_heads, self.head_dim)
+                    k = k.view(B, N, self.num_heads, self.head_dim)
+                    v = v.view(B, N, self.num_heads, self.head_dim)
+                    
+                    x = flash_attn_func(
+                        q.contiguous().half(),
+                        k.contiguous().half(),
+                        v.contiguous().half()
+                    ).to(q.dtype)
+                else:
+                    # Standard attention computation
+                    q = q.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
+                    k = k.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
+                    v = v.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
+                    
+                    # Compute attention with numerical stability
+                    attn = (q.transpose(-2, -1) @ k) * (self.head_dim ** -0.5)
+                    max_attn = attn.max(dim=-1, keepdim=True).values
+                    exp_attn = torch.exp(attn - max_attn)
+                    attn = exp_attn / exp_attn.sum(dim=-1, keepdim=True)
+                    x = (v @ attn.transpose(-2, -1))
+                    
+                    x = x.permute(0, 3, 1, 2)
+                
+                # Reshape back if using area attention
+                if self.area > 1:
+                    x = x.reshape(B // self.area, N * self.area, C)
+                    B, N, _ = x.shape
+                
+                # Reshape to spatial dimensions
+                x = x.reshape(B, H, W, C).permute(0, 3, 1, 2)
+                
+                # Apply projection and add positional encoding
+                return self.proj(x + pp)
+        
+        # Replace the AAttn class with our fixed version
+        block_module.AAttn = AAttnV12
+        logger.info("Successfully patched ultralytics AAttn for YOLOv12 compatibility")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Could not patch ultralytics AAttn: {e}")
+        return False
+
 class YOLODetector:
     """
     YOLOv12-based object detector for containers and vehicles.
@@ -110,6 +216,31 @@ class YOLODetector:
     def _load_model(self) -> None:
         """Load the YOLO model and configure it."""
         try:
+            # Detect model version from filename
+            model_name = Path(self.model_path).name
+            is_yolov12 = False
+            
+            if 'yolov12' in model_name.lower():
+                model_version = "YOLOv12"
+                is_yolov12 = True
+            elif 'yolo' in model_name.lower():
+                # Extract version number if present
+                import re
+                match = re.search(r'yolov?(\d+)', model_name.lower())
+                if match and match.group(1) == '12':
+                    model_version = "YOLOv12"
+                    is_yolov12 = True
+                else:
+                    model_version = f"YOLOv{match.group(1)}" if match else "YOLO"
+            else:
+                model_version = "YOLO"
+            
+            # Apply YOLOv12 patch if needed
+            if is_yolov12:
+                logger.info("Detected YOLOv12 model, applying AAttn compatibility patch...")
+                patch_yolov12_aattn()
+            
+            # Load the model
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
             
@@ -117,21 +248,6 @@ class YOLODetector:
             self.model.conf = self.confidence_threshold
             self.model.iou = self.iou_threshold
             
-            # Detect model version from filename - focus on YOLOv12
-            model_name = Path(self.model_path).name
-            if 'yolov12' in model_name.lower():
-                model_version = "YOLOv12"
-            elif 'yolo' in model_name.lower():
-                # Extract version number if present
-                import re
-                match = re.search(r'yolov?(\d+)', model_name.lower())
-                if match and match.group(1) == '12':
-                    model_version = "YOLOv12"
-                else:
-                    model_version = f"YOLOv{match.group(1)}" if match else "YOLO (assuming YOLOv12 compatible)"
-            else:
-                model_version = "YOLO (assuming YOLOv12 compatible)"
-
             logger.info(f"Successfully loaded {model_version} model: {self.model_path}")
             
         except Exception as e:
