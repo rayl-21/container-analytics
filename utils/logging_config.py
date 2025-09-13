@@ -12,7 +12,7 @@ Example:
     >>> 
     >>> # Get logger for specific module
     >>> logger = get_logger("modules.detection.yolo_detector")
-    >>> logger.info("Starting object detection", model="yolov8x", confidence=0.5)
+    >>> logger.info("Starting object detection", model="yolov12x", confidence=0.5)
     >>> 
     >>> # Log with structured data
     >>> logger.error("Detection failed", 
@@ -296,7 +296,7 @@ def log_detection_result(
     detections_count: int,
     confidence_scores: list,
     processing_time_ms: float,
-    model_name: str = "yolov8x",
+    model_name: str = "yolov12x",
 ) -> None:
     """
     Log object detection results with structured data.

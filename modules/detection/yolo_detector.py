@@ -103,7 +103,7 @@ class YOLODetector:
         self.detection_times = []
         
     def _load_model(self) -> None:
-        """Load the YOLOv12 model and configure it."""
+        """Load the YOLO model and configure it."""
         try:
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
@@ -112,10 +112,24 @@ class YOLODetector:
             self.model.conf = self.confidence_threshold
             self.model.iou = self.iou_threshold
             
-            logger.info(f"Successfully loaded YOLOv12 model: {self.model_path}")
+            # Detect model version from filename
+            model_name = Path(self.model_path).name
+            if 'yolov12' in model_name.lower():
+                model_version = "YOLOv12"
+            elif 'yolov8' in model_name.lower():
+                model_version = "YOLOv8"
+            elif 'yolo' in model_name.lower():
+                # Extract version number if present
+                import re
+                match = re.search(r'yolov?(\d+)', model_name.lower())
+                model_version = f"YOLOv{match.group(1)}" if match else "YOLO"
+            else:
+                model_version = "YOLO"
+            
+            logger.info(f"Successfully loaded {model_version} model: {self.model_path}")
             
         except Exception as e:
-            logger.error(f"Failed to load YOLOv12 model: {e}")
+            logger.error(f"Failed to load YOLO model from {self.model_path}: {e}")
             raise
     
     def detect_single_image(

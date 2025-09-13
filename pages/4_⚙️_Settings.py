@@ -93,7 +93,7 @@ DEFAULT_CONFIG = {
         "max_detections": 100,
         "enable_tracking": True,
         "tracking_max_age": 30,
-        "model_path": "yolov8x.pt"
+        "model_path": "yolov12x.pt"
     },
     "alerts": {
         "enable_alerts": True,
